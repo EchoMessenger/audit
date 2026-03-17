@@ -1,0 +1,17 @@
+spring:
+  main:
+    # Нужно для TestSecurityConfig — он переопределяет jwtDecoder из SecurityConfig
+    allow-bean-definition-overriding: true
+  flyway:
+    enabled: false
+
+audit:
+  incidents:
+    # Отключаем scheduled detection в тестах — не нужен и мешает
+    detection-interval-seconds: 999999
+
+logging:
+  level:
+    com.zaxxer.hikari: WARN
+    com.clickhouse: WARN
+    org.springframework.security: WARN

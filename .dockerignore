@@ -1,0 +1,11 @@
+.git
+.gradle
+.idea/
+build/
+bin/
+out/
+.idea
+.vscode
+*.md
+Dockerfile
+Makefile
