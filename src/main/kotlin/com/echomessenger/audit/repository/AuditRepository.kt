@@ -3,6 +3,7 @@ package com.echomessenger.audit.repository
 import com.echomessenger.audit.domain.AuditEvent
 import com.echomessenger.audit.domain.CursorCodec
 import com.echomessenger.audit.domain.CursorPage
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.stereotype.Repository
@@ -10,16 +11,9 @@ import java.sql.ResultSet
 
 @Repository
 class AuditRepository(
+    @Qualifier("clickHouseJdbcTemplate")
     private val jdbc: NamedParameterJdbcTemplate,
 ) {
-    /**
-     * GET /audit/events — поиск по всем таблицам.
-     *
-     * ClickHouse JDBC 0.7.x не поддерживает именованные параметры (:param) и
-     * подзапросы с UNION ALL через PreparedStatement одновременно.
-     * Решение: запрашиваем каждую таблицу отдельно, объединяем и сортируем в памяти.
-     * Для типичных лимитов (100-1000) это negligible overhead.
-     */
     fun findEvents(
         userId: String? = null,
         actorUserId: String? = null,
@@ -35,7 +29,6 @@ class AuditRepository(
         val effectiveLimit = limit.coerceIn(1, 1000)
         val msgTypes = eventType?.let { mapEventTypeToMsgTypes(it) }
 
-        // Запрашиваем каждую таблицу отдельно — обходим ограничение JDBC с UNION ALL
         val clientRows =
             if (topicId == null) {
                 queryClientReqLog(userId ?: actorUserId, msgTypes, fromTs, toTs, cursorTs, effectiveLimit + 1)
@@ -50,7 +43,6 @@ class AuditRepository(
                 emptyList()
             }
 
-        // Объединяем и сортируем в памяти по timestamp DESC
         val combined =
             (clientRows + messageRows)
                 .sortedByDescending { it.timestamp }
@@ -80,9 +72,9 @@ class AuditRepository(
         val conditions =
             buildList {
                 if (userId != null) add("sess_user_id = :userId")
-                if (fromTs != null) add("req_ts >= fromUnixTimestamp64Milli(:fromTs)")
-                if (toTs != null) add("req_ts <= fromUnixTimestamp64Milli(:toTs)")
-                if (cursorTs != null) add("req_ts < fromUnixTimestamp64Milli(:cursorTs)")
+                if (fromTs != null) add("log_timestamp >= fromUnixTimestamp64Milli(:fromTs)")
+                if (toTs != null) add("log_timestamp <= fromUnixTimestamp64Milli(:toTs)")
+                if (cursorTs != null) add("log_timestamp < fromUnixTimestamp64Milli(:cursorTs)")
                 if (msgTypes != null) add("msg_type IN (:msgTypes)")
             }.let { if (it.isEmpty()) "1=1" else it.joinToString(" AND ") }
 
@@ -99,19 +91,20 @@ class AuditRepository(
         return jdbc.query(
             """
             SELECT
-                log_id                                          AS event_id,
-                if(sess_auth_level > 0, 'success', 'failure')  AS status,
-                toUnixTimestamp64Milli(req_ts)                  AS timestamp,
-                sess_user_id                                    AS user_id,
-                NULL                                            AS topic_id,
+                toString(log_id)                                           AS event_id,
                 msg_type,
-                client_ip                                       AS ip,
-                user_agent,
-                sess_device_id                                  AS device_id,
+                toUnixTimestamp64Milli(log_timestamp)                      AS timestamp,
+                sess_user_id                                               AS user_id,
+                msg_topic                                                  AS topic_id,
+                if(sess_auth_level != '' AND sess_auth_level != '0',
+                   'success', 'failure')                                   AS status,
+                sess_remote_addr                                           AS ip,
+                sess_user_agent                                            AS user_agent,
+                sess_device_id                                             AS device_id,
                 sess_session_id
             FROM audit.client_req_log
             WHERE $conditions
-            ORDER BY req_ts DESC
+            ORDER BY log_timestamp DESC
             LIMIT :limit
             """.trimIndent(),
             params,
@@ -127,14 +120,26 @@ class AuditRepository(
         cursorTs: Long?,
         limit: Int,
     ): List<AuditEvent> {
+        // Конвертируем msg_type (PUB/EDIT/DEL/HDEL) → action (CREATE/UPDATE/DELETE)
+        val actionValues =
+            msgTypes
+                ?.mapNotNull {
+                    when (it) {
+                        "PUB" -> "CREATE"
+                        "EDIT" -> "UPDATE"
+                        "DEL", "HDEL" -> "DELETE"
+                        else -> null
+                    }
+                }?.distinct()
+
         val conditions =
             buildList {
-                if (userId != null) add("usr_id = :userId")
-                if (topicId != null) add("topic_id = :topicId")
-                if (fromTs != null) add("msg_ts >= fromUnixTimestamp64Milli(:fromTs)")
-                if (toTs != null) add("msg_ts <= fromUnixTimestamp64Milli(:toTs)")
-                if (cursorTs != null) add("msg_ts < fromUnixTimestamp64Milli(:cursorTs)")
-                if (msgTypes != null) add("msg_type IN (:msgTypes)")
+                if (userId != null) add("msg_from_user_id = :userId")
+                if (topicId != null) add("msg_topic = :topicId")
+                if (fromTs != null) add("log_timestamp >= fromUnixTimestamp64Milli(:fromTs)")
+                if (toTs != null) add("log_timestamp <= fromUnixTimestamp64Milli(:toTs)")
+                if (cursorTs != null) add("log_timestamp < fromUnixTimestamp64Milli(:cursorTs)")
+                if (actionValues != null) add("toString(action) IN (:actionValues)")
             }.let { if (it.isEmpty()) "1=1" else it.joinToString(" AND ") }
 
         val params =
@@ -145,25 +150,30 @@ class AuditRepository(
                 addValue("toTs", toTs)
                 addValue("cursorTs", cursorTs)
                 addValue("limit", limit)
-                if (msgTypes != null) addValue("msgTypes", msgTypes)
+                if (actionValues != null) addValue("actionValues", actionValues)
             }
 
         return jdbc.query(
             """
             SELECT
-                toString(seq_id)                    AS event_id,
-                'success'                           AS status,
-                toUnixTimestamp64Milli(msg_ts)      AS timestamp,
-                usr_id                              AS user_id,
-                topic_id,
-                msg_type,
-                ''                                  AS ip,
-                ''                                  AS user_agent,
-                ''                                  AS device_id,
-                ''                                  AS sess_session_id
+                toString(log_id)                       AS event_id,
+                CASE toString(action)
+                    WHEN 'CREATE' THEN 'PUB'
+                    WHEN 'UPDATE' THEN 'EDIT'
+                    WHEN 'DELETE' THEN 'DEL'
+                    ELSE toString(action)
+                END                                    AS msg_type,
+                toUnixTimestamp64Milli(log_timestamp)   AS timestamp,
+                msg_from_user_id                       AS user_id,
+                msg_topic                              AS topic_id,
+                'success'                              AS status,
+                ''                                     AS ip,
+                ''                                     AS user_agent,
+                ''                                     AS device_id,
+                ''                                     AS sess_session_id
             FROM audit.message_log
             WHERE $conditions
-            ORDER BY msg_ts DESC
+            ORDER BY log_timestamp DESC
             LIMIT :limit
             """.trimIndent(),
             params,
@@ -171,21 +181,21 @@ class AuditRepository(
     }
 
     fun findEventById(eventId: String): AuditEvent? {
-        // Ищем сначала в client_req_log (UUID), потом в message_log (numeric seq_id)
         val fromClient =
             runCatching {
                 jdbc.query(
                     """
                     SELECT
-                        log_id                                              AS event_id,
-                        toUnixTimestamp64Milli(req_ts)                      AS timestamp,
-                        sess_user_id                                        AS user_id,
-                        if(sess_auth_level > 0, 'success', 'failure')       AS status,
-                        NULL                                                AS topic_id,
+                        toString(log_id)                                       AS event_id,
                         msg_type,
-                        client_ip                                           AS ip,
-                        user_agent,
-                        sess_device_id                                      AS device_id,
+                        toUnixTimestamp64Milli(log_timestamp)                   AS timestamp,
+                        sess_user_id                                           AS user_id,
+                        msg_topic                                              AS topic_id,
+                        if(sess_auth_level != '' AND sess_auth_level != '0',
+                           'success', 'failure')                               AS status,
+                        sess_remote_addr                                       AS ip,
+                        sess_user_agent                                        AS user_agent,
+                        sess_device_id                                         AS device_id,
                         sess_session_id
                     FROM audit.client_req_log
                     WHERE log_id = toUUID(:eventId)
@@ -201,18 +211,23 @@ class AuditRepository(
             .query(
                 """
                 SELECT
-                    toString(seq_id)                    AS event_id,
-                    toUnixTimestamp64Milli(msg_ts)      AS timestamp,
-                    usr_id                              AS user_id,
-                    'success'                           AS status,
-                    topic_id,
-                    msg_type,
-                    ''                                  AS ip,
-                    ''                                  AS user_agent,
-                    ''                                  AS device_id,
-                    ''                                  AS sess_session_id
+                    toString(log_id)                       AS event_id,
+                    CASE toString(action)
+                        WHEN 'CREATE' THEN 'PUB'
+                        WHEN 'UPDATE' THEN 'EDIT'
+                        WHEN 'DELETE' THEN 'DEL'
+                        ELSE toString(action)
+                    END                                    AS msg_type,
+                    toUnixTimestamp64Milli(log_timestamp)   AS timestamp,
+                    msg_from_user_id                       AS user_id,
+                    msg_topic                              AS topic_id,
+                    'success'                              AS status,
+                    ''                                     AS ip,
+                    ''                                     AS user_agent,
+                    ''                                     AS device_id,
+                    ''                                     AS sess_session_id
                 FROM audit.message_log
-                WHERE toString(seq_id) = :eventId
+                WHERE toString(log_id) = :eventId
                 LIMIT 1
                 """.trimIndent(),
                 MapSqlParameterSource("eventId", eventId),
@@ -220,9 +235,6 @@ class AuditRepository(
             .firstOrNull()
     }
 
-    /**
-     * GET /audit/auth-events — только LOGIN, HI, BYE, REG из client_req_log
-     */
     fun findAuthEvents(
         userId: String? = null,
         fromTs: Long? = null,
@@ -237,9 +249,9 @@ class AuditRepository(
             buildList {
                 add("msg_type IN ('LOGIN', 'HI', 'BYE', 'REG')")
                 if (userId != null) add("sess_user_id = :userId")
-                if (fromTs != null) add("req_ts >= fromUnixTimestamp64Milli(:fromTs)")
-                if (toTs != null) add("req_ts <= fromUnixTimestamp64Milli(:toTs)")
-                if (cursorTs != null) add("req_ts < fromUnixTimestamp64Milli(:cursorTs)")
+                if (fromTs != null) add("log_timestamp >= fromUnixTimestamp64Milli(:fromTs)")
+                if (toTs != null) add("log_timestamp <= fromUnixTimestamp64Milli(:toTs)")
+                if (cursorTs != null) add("log_timestamp < fromUnixTimestamp64Milli(:cursorTs)")
             }
 
         val params =
@@ -255,19 +267,20 @@ class AuditRepository(
             jdbc.query(
                 """
                 SELECT
-                    log_id                                          AS event_id,
+                    toString(log_id)                                       AS event_id,
                     msg_type,
-                    toUnixTimestamp64Milli(req_ts)                  AS timestamp,
-                    sess_user_id                                    AS user_id,
-                    NULL                                            AS topic_id,
-                    if(sess_auth_level > 0, 'success', 'failure')  AS status,
-                    client_ip                                       AS ip,
-                    user_agent,
-                    sess_device_id                                  AS device_id,
+                    toUnixTimestamp64Milli(log_timestamp)                   AS timestamp,
+                    sess_user_id                                           AS user_id,
+                    msg_topic                                              AS topic_id,
+                    if(sess_auth_level != '' AND sess_auth_level != '0',
+                       'success', 'failure')                               AS status,
+                    sess_remote_addr                                       AS ip,
+                    sess_user_agent                                        AS user_agent,
+                    sess_device_id                                         AS device_id,
                     sess_session_id
                 FROM audit.client_req_log
                 WHERE ${conditions.joinToString(" AND ")}
-                ORDER BY req_ts DESC
+                ORDER BY log_timestamp DESC
                 LIMIT :limit
                 """.trimIndent(),
                 params,

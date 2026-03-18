@@ -2,6 +2,7 @@ package com.echomessenger.audit.repository
 
 import com.echomessenger.audit.domain.Incident
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.stereotype.Repository
@@ -9,6 +10,7 @@ import java.sql.ResultSet
 
 @Repository
 class IncidentRepository(
+    @Qualifier("clickHouseJdbcTemplate")
     private val jdbc: NamedParameterJdbcTemplate,
 ) {
     private val mapper = jacksonObjectMapper()

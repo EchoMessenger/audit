@@ -39,16 +39,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor:1.10.1")
 
     // ClickHouse
-    implementation("com.clickhouse:clickhouse-jdbc:0.7.1") {
-        exclude(group = "com.clickhouse", module = "clickhouse-grpc-client")
-        exclude(group = "com.clickhouse", module = "clickhouse-http-client")
-    }
+    implementation("com.clickhouse:clickhouse-jdbc:0.7.1")
     implementation("com.clickhouse:clickhouse-http-client:0.7.1")
     implementation("org.apache.httpcomponents.client5:httpclient5:5.4.1")
     implementation("at.yawk.lz4:lz4-java:1.10.1")
-
-    // HikariCP
-    implementation("com.zaxxer:HikariCP:5.1.0")
 
     // Flyway
     implementation("org.flywaydb:flyway-core:11.2.0")

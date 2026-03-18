@@ -3,12 +3,14 @@ package com.echomessenger.audit.repository
 import com.echomessenger.audit.domain.ExportFormat
 import com.echomessenger.audit.domain.ExportJob
 import com.echomessenger.audit.domain.ExportStatus
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.stereotype.Repository
 
 @Repository
 class ExportRepository(
+    @Qualifier("clickHouseJdbcTemplate")
     private val jdbc: NamedParameterJdbcTemplate,
 ) {
     fun save(job: ExportJob) {

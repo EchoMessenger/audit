@@ -11,179 +11,156 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import java.nio.file.Path
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlin.io.path.listDirectoryEntries
 
+private fun chTs(instant: Instant): String =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+        .withZone(ZoneOffset.UTC)
+        .format(instant)
+
 class ExportServiceIT : IntegrationTestBase() {
     @Autowired private lateinit var exportRepository: ExportRepository
-
     @Autowired private lateinit var messageRepository: MessageRepository
-
     @Autowired private lateinit var jdbc: NamedParameterJdbcTemplate
 
-    @TempDir
-    lateinit var tempDir: Path
+    @TempDir lateinit var tempDir: Path
 
-    // Создаём ExportService с TempDir — обходим @Value pvcPath из контекста
-    private fun service() =
-        ExportService(
-            exportRepository = exportRepository,
-            messageRepository = messageRepository,
-            storageType = "pvc",
-            pvcPath = tempDir.toString(),
-        )
-
-    // ── CSV export ────────────────────────────────────────────────────────────
+    private fun service() = ExportService(
+        exportRepository = exportRepository,
+        messageRepository = messageRepository,
+        storageType = "pvc",
+        pvcPath = tempDir.toString(),
+    )
 
     @Test
     fun `CSV export creates file and reaches completed status`() {
         val userId = "exp_csv_${UUID.randomUUID().toString().take(8)}"
         seedMessages(userId)
 
-        val job =
-            service().startExport(
-                ExportRequest(
-                    filters =
-                        ExportFilters(
-                            userId = userId,
-                            fromTs = System.currentTimeMillis() - 3_600_000,
-                            toTs = System.currentTimeMillis(),
-                        ),
-                    format = ExportFormat.csv,
+        val job = service().startExport(
+            ExportRequest(
+                filters = ExportFilters(
+                    userId = userId,
+                    fromTs = System.currentTimeMillis() - 3_600_000,
+                    toTs = System.currentTimeMillis(),
                 ),
-            )
+                format = ExportFormat.csv,
+            ),
+        )
+        assertEquals(ExportStatus.pending, job.status)
 
-        assertEquals(ExportStatus.pending, job.status, "Should start as pending")
-
-        // Ждём завершения coroutine (Dispatchers.IO)
         Thread.sleep(3000)
 
-        val completed = exportRepository.findById(job.exportId)
-        assertNotNull(completed, "Job should be persisted in export_job_log")
-        assertEquals(
-            ExportStatus.completed,
-            completed!!.status,
-            "Job should reach completed, got: ${completed.status} error: ${completed.errorMessage}",
-        )
-        assertNotNull(completed.completedAt, "completedAt should be set")
-        assertNotNull(completed.downloadUrl, "downloadUrl should be set")
-        assertTrue((completed.fileSizeBytes ?: 0) > 0, "File size should be > 0")
+        val completed = (1..20).asSequence()
+            .map { Thread.sleep(500); exportRepository.findById(job.exportId) }
+            .firstOrNull { it?.status == ExportStatus.completed || it?.status == ExportStatus.failed }
 
-        // Файл существует на диске
+        assertNotNull(completed)
+        assertEquals(ExportStatus.completed, completed!!.status,
+            "got: ${completed.status}, error: ${completed.errorMessage}")
+        assertNotNull(completed.completedAt)
+        assertNotNull(completed.downloadUrl)
+        assertTrue((completed.fileSizeBytes ?: 0) > 0)
+
         val files = tempDir.listDirectoryEntries("${job.exportId}.csv")
-        assertTrue(files.isNotEmpty(), "CSV file should exist in $tempDir")
+        assertTrue(files.isNotEmpty())
         val content = files.first().toFile().readText()
-        assertTrue(content.startsWith("message_id,"), "CSV should have header row")
-        assertTrue(content.lines().size > 1, "CSV should have data rows")
+        assertTrue(content.startsWith("message_id,"))
+        assertTrue(content.lines().size > 1)
     }
-
-    // ── JSON export ───────────────────────────────────────────────────────────
 
     @Test
     fun `JSON export creates valid JSON array file`() {
         val userId = "exp_json_${UUID.randomUUID().toString().take(8)}"
         seedMessages(userId)
 
-        val job =
-            service().startExport(
-                ExportRequest(
-                    filters =
-                        ExportFilters(
-                            userId = userId,
-                            fromTs = System.currentTimeMillis() - 3_600_000,
-                            toTs = System.currentTimeMillis(),
-                        ),
-                    format = ExportFormat.json,
+        val job = service().startExport(
+            ExportRequest(
+                filters = ExportFilters(
+                    userId = userId,
+                    fromTs = System.currentTimeMillis() - 3_600_000,
+                    toTs = System.currentTimeMillis(),
                 ),
-            )
+                format = ExportFormat.json,
+            ),
+        )
 
         Thread.sleep(3000)
 
         val files = tempDir.listDirectoryEntries("${job.exportId}.json")
-        assertTrue(files.isNotEmpty(), "JSON file should exist")
-        val content =
-            files
-                .first()
-                .toFile()
-                .readText()
-                .trim()
-        assertTrue(content.startsWith("["), "JSON export should start with '['")
-        assertTrue(content.endsWith("]"), "JSON export should end with ']'")
+        assertTrue(files.isNotEmpty())
+        val content = files.first().toFile().readText().trim()
+        assertTrue(content.startsWith("["))
+        assertTrue(content.endsWith("]"))
     }
-
-    // ── empty result ──────────────────────────────────────────────────────────
 
     @Test
     fun `export with no matching data completes successfully with empty file`() {
-        val job =
-            service().startExport(
-                ExportRequest(
-                    filters =
-                        ExportFilters(
-                            userId = "nonexistent_${UUID.randomUUID()}",
-                            fromTs = System.currentTimeMillis() - 3_600_000,
-                            toTs = System.currentTimeMillis(),
-                        ),
-                    format = ExportFormat.csv,
+        val job = service().startExport(
+            ExportRequest(
+                filters = ExportFilters(
+                    userId = "nonexistent_${UUID.randomUUID()}",
+                    fromTs = System.currentTimeMillis() - 3_600_000,
+                    toTs = System.currentTimeMillis(),
                 ),
-            )
+                format = ExportFormat.csv,
+            ),
+        )
 
         Thread.sleep(3000)
 
         val completed = exportRepository.findById(job.exportId)
-        assertEquals(
-            ExportStatus.completed,
-            completed?.status,
-            "Empty export should complete, not fail",
-        )
+        assertEquals(ExportStatus.completed, completed?.status)
     }
-
-    // ── getJob ────────────────────────────────────────────────────────────────
 
     @Test
     fun `getJob returns null for unknown export id`() {
-        val result = service().getJob("completely-unknown-id")
-        assertNull(result)
+        assertNull(service().getJob("completely-unknown-id"))
     }
 
     @Test
     fun `getJob returns persisted job`() {
-        val job =
-            service().startExport(
-                ExportRequest(
-                    filters =
-                        ExportFilters(
-                            fromTs = System.currentTimeMillis() - 3600_000,
-                            toTs = System.currentTimeMillis(),
-                        ),
-                    format = ExportFormat.csv,
+        val job = service().startExport(
+            ExportRequest(
+                filters = ExportFilters(
+                    fromTs = System.currentTimeMillis() - 3600_000,
+                    toTs = System.currentTimeMillis(),
                 ),
-            )
-
-        // Сразу после startExport — должно быть в БД в статусе pending или running
+                format = ExportFormat.csv,
+            ),
+        )
         val found = service().getJob(job.exportId)
-        assertNotNull(found, "Job should be findable immediately after startExport")
+        assertNotNull(found)
         assertEquals(job.exportId, found!!.exportId)
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
-
     private fun seedMessages(userId: String) {
-        val base = System.currentTimeMillis() * 100 + userId.hashCode().and(0xFFFF).toLong()
-        jdbc.update(
-            """
-            INSERT INTO audit.message_log
-                (seq_id, msg_ts, msg_type, usr_id, topic_id, content)
-            VALUES
-                (:s1, now64(3) - INTERVAL 30 MINUTE, 'PUB',  :u, 'topic_exp', 'Export msg 1'),
-                (:s2, now64(3) - INTERVAL 20 MINUTE, 'PUB',  :u, 'topic_exp', 'Export msg 2'),
-                (:s3, now64(3) - INTERVAL 10 MINUTE, 'EDIT', :u, 'topic_exp', 'Edited msg')
-            """.trimIndent(),
-            MapSqlParameterSource("u", userId)
-                .addValue("s1", base + 1)
-                .addValue("s2", base + 2)
-                .addValue("s3", base + 3),
-        )
+        val now = Instant.now()
+        listOf(
+            Triple(1800L, "CREATE", 1),
+            Triple(1200L, "CREATE", 2),
+            Triple(600L,  "UPDATE", 1),
+        ).forEach { (offsetSec, action, seqId) ->
+            jdbc.update(
+                """INSERT INTO audit.message_log
+                   (log_id, log_timestamp, action, msg_topic, msg_from_user_id,
+                    msg_timestamp, msg_seq_id, msg_content)
+                   VALUES (:id, :ts, :act, :topic, :uid, :msgTs, :seqId, :content)""",
+                MapSqlParameterSource()
+                    .addValue("id", UUID.randomUUID().toString())
+                    .addValue("ts", chTs(now.minusSeconds(offsetSec)))
+                    .addValue("act", action)
+                    .addValue("topic", "topic_exp")
+                    .addValue("uid", userId)
+                    .addValue("msgTs", now.minusSeconds(offsetSec).toEpochMilli())
+                    .addValue("seqId", seqId)
+                    .addValue("content", "Export msg $seqId"),
+            )
+        }
         Thread.sleep(500)
     }
 }

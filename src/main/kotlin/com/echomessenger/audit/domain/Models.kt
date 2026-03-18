@@ -1,7 +1,6 @@
 package com.echomessenger.audit.domain
 
 import com.fasterxml.jackson.annotation.JsonInclude
-import java.time.Instant
 import java.util.Base64
 
 // ── AuditEvent ─────────────────────────────────────────────────────────────

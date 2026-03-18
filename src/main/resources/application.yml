@@ -29,6 +29,12 @@ management:
 spring:
   application:
     name: audit-service
+    datasource:
+      type: com.clickhouse.jdbc.ClickHouseDataSource  # не используем — просто отключаем HikariCP autoconfigure
+    autoconfigure:
+      exclude:
+        - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+        - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
 
   security:
     oauth2:
@@ -38,10 +44,7 @@ spring:
           jwk-set-uri: ${KEYCLOAK_ISSUER_URI:http://keycloak:8080/realms/echo}/protocol/openid-connect/certs
 
   flyway:
-    enabled: true
-    url: ${CLICKHOUSE_FLYWAY_URL:jdbc:h2:mem:flyway}  # Flyway uses separate lightweight connection for DDL only
-    locations: classpath:db/migration
-    baseline-on-migrate: true
+    enabled: false
 
   cache:
     type: caffeine
@@ -49,15 +52,10 @@ spring:
       spec: maximumSize=500,expireAfterWrite=300s
 
 clickhouse:
-  url: ${CLICKHOUSE_URL:jdbc:clickhouse://clickhouse:8123/audit}
-  user: ${CLICKHOUSE_USER:audit_readonly}
+  http-url: ${CLICKHOUSE_HTTP_URL:http://clickhouse:8123}
+  username: ${CLICKHOUSE_USERNAME:audit}
   password: ${CLICKHOUSE_PASSWORD:changeme}
-  pool:
-    maximum-pool-size: ${CLICKHOUSE_POOL_SIZE:10}
-    minimum-idle: 2
-    connection-timeout: 5000
-    socket-timeout: 30000
-    query-timeout: 25000
+  database: ${CLICKHOUSE_DATABASE:audit}
 
 audit:
   export:

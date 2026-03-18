@@ -3,12 +3,14 @@ package com.echomessenger.audit.repository
 import com.echomessenger.audit.domain.CursorCodec
 import com.echomessenger.audit.domain.CursorPage
 import com.echomessenger.audit.domain.SessionSummary
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.stereotype.Repository
 
 @Repository
 class SessionRepository(
+    @Qualifier("clickHouseJdbcTemplate")
     private val jdbc: NamedParameterJdbcTemplate,
 ) {
     /**
@@ -29,8 +31,8 @@ class SessionRepository(
             buildList {
                 add("sess_session_id != ''")
                 if (userId != null) add("sess_user_id = :userId")
-                if (fromTs != null) add("req_ts >= fromUnixTimestamp64Milli(:fromTs)")
-                if (toTs != null) add("req_ts <= fromUnixTimestamp64Milli(:toTs)")
+                if (fromTs != null) add("log_timestamp >= fromUnixTimestamp64Milli(:fromTs)")
+                if (toTs != null) add("log_timestamp <= fromUnixTimestamp64Milli(:toTs)")
                 if (cursorTs != null) add("max_ts < fromUnixTimestamp64Milli(:cursorTs)")
             }
 
@@ -47,17 +49,17 @@ class SessionRepository(
         val sql =
             """
             SELECT
-                sess_session_id                                     AS session_id,
-                any(sess_user_id)                                   AS user_id,
-                toUnixTimestamp64Milli(min(req_ts))                 AS first_event_at,
-                toUnixTimestamp64Milli(max(req_ts))                 AS last_event_at,
-                toInt64(dateDiff('second', min(req_ts), max(req_ts))) AS duration_seconds,
-                count()                                             AS event_count,
-                groupUniqArray(client_ip)                           AS ip_addresses
+                sess_session_id AS session_id,
+                any(sess_user_id) AS user_id,
+                toUnixTimestamp64Milli(min(log_timestamp)) AS first_event_at,
+                toUnixTimestamp64Milli(max(log_timestamp)) AS last_event_at,
+                dateDiff('second', min(log_timestamp), max(log_timestamp)) AS duration_seconds,
+                count() AS event_count,
+                groupUniqArray(sess_remote_addr) AS ip_addresses
             FROM audit.client_req_log
             WHERE ${conditions.filter { !it.contains("max_ts") }.joinToString(" AND ")}
             GROUP BY sess_session_id
-            ${if (cursorTs != null) "HAVING toUnixTimestamp64Milli(max(req_ts)) < :cursorTs" else ""}
+            ${if (cursorTs != null) "HAVING toUnixTimestamp64Milli(max(log_timestamp)) < :cursorTs" else ""}
             ORDER BY last_event_at DESC
             LIMIT :limit
             """.trimIndent()

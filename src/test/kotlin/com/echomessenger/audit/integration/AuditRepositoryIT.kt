@@ -8,6 +8,10 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import java.util.UUID
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+
 
 class AuditRepositoryIT : IntegrationTestBase() {
     @Autowired private lateinit var auditRepository: AuditRepository
@@ -24,6 +28,11 @@ class AuditRepositoryIT : IntegrationTestBase() {
     private lateinit var topic1: String
     private lateinit var topic2: String
 
+    private fun chTs(instant: Instant): String =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+            .withZone(ZoneOffset.UTC)
+            .format(instant)
+
     @BeforeEach
     fun seedData() {
         runId = UUID.randomUUID().toString().take(8)
@@ -32,45 +41,81 @@ class AuditRepositoryIT : IntegrationTestBase() {
         topic1 = "t1_$runId"
         topic2 = "t2_$runId"
 
-        jdbc.update(
-            """
-            INSERT INTO audit.client_req_log
-                (log_id, req_ts, msg_type, sess_user_id, sess_auth_level, client_ip, user_agent, sess_session_id, sess_device_id)
-            VALUES
-                (generateUUIDv4(), now64(3) - INTERVAL 10 MINUTE, 'LOGIN', :u1, 1, '10.0.0.1', 'Chrome',  'sess1', 'dev1'),
-                (generateUUIDv4(), now64(3) - INTERVAL 5 MINUTE,  'LOGIN', :u1, 0, '10.0.0.2', 'Firefox', 'sess1', 'dev1'),
-                (generateUUIDv4(), now64(3) - INTERVAL 3 MINUTE,  'LOGIN', :u2, 1, '10.0.0.3', 'Safari',  'sess2', 'dev2'),
-                (generateUUIDv4(), now64(3) - INTERVAL 1 MINUTE,  'BYE',   :u1, 1, '10.0.0.1', 'Chrome',  'sess1', 'dev1')
-            """.trimIndent(),
-            MapSqlParameterSource().addValue("u1", user1).addValue("u2", user2),
+        val now = Instant.now()
+
+        // ── client_req_log ───────────────────────────────────────────
+        // Колонки без DEFAULT (String) автоматически получают '' в ClickHouse,
+        // поэтому НЕ включаем sess_language, msg_id, msg_topic и пр.
+
+        data class ReqRow(
+            val offsetSec: Long, val msgType: String, val userId: String,
+            val authLevel: String, val ip: String, val ua: String,
+            val sessId: String, val devId: String,
         )
 
-        jdbc.update(
-            """
-            INSERT INTO audit.message_log
-                (seq_id, msg_ts, msg_type, usr_id, topic_id, content)
-            VALUES
-                (:s1, now64(3) - INTERVAL 8 MINUTE, 'PUB',  :u1, :t1, 'Hello'),
-                (:s2, now64(3) - INTERVAL 6 MINUTE, 'PUB',  :u2, :t1, 'World'),
-                (:s3, now64(3) - INTERVAL 2 MINUTE, 'EDIT', :u1, :t1, 'Hello edited'),
-                (:s4, now64(3) - INTERVAL 1 MINUTE, 'DEL',  :u1, :t2, '')
-            """.trimIndent(),
-            MapSqlParameterSource()
-                .addValue("u1", user1)
-                .addValue("u2", user2)
-                .addValue("t1", topic1)
-                .addValue("t2", topic2)
-                // seq_id уникальный per-run чтобы не конфликтовать с другими тестами
-                .addValue("s1", runId.hashCode().toLong().and(0xFFFFFFFFL) * 10 + 1)
-                .addValue("s2", runId.hashCode().toLong().and(0xFFFFFFFFL) * 10 + 2)
-                .addValue("s3", runId.hashCode().toLong().and(0xFFFFFFFFL) * 10 + 3)
-                .addValue("s4", runId.hashCode().toLong().and(0xFFFFFFFFL) * 10 + 4),
+        listOf(
+            ReqRow(600, "LOGIN", user1, "1", "10.0.0.1", "Chrome",  "sess1", "dev1"),
+            ReqRow(300, "LOGIN", user1, "0", "10.0.0.2", "Firefox", "sess1", "dev1"),
+            ReqRow(180, "LOGIN", user2, "1", "10.0.0.3", "Safari",  "sess2", "dev2"),
+            ReqRow(60,  "BYE",   user1, "1", "10.0.0.1", "Chrome",  "sess1", "dev1"),
+        ).forEach { r ->
+            jdbc.update(
+                """INSERT INTO audit.client_req_log
+               (log_id, log_timestamp, msg_type,
+                sess_user_id, sess_auth_level,
+                sess_remote_addr, sess_user_agent,
+                sess_session_id, sess_device_id)
+               VALUES
+               (:id, :ts, :mt, :uid, :al, :ip, :ua, :sid, :did)""",
+                MapSqlParameterSource()
+                    .addValue("id",  UUID.randomUUID().toString())
+                    .addValue("ts",  chTs(now.minusSeconds(r.offsetSec)))
+                    .addValue("mt",  r.msgType)
+                    .addValue("uid", r.userId)
+                    .addValue("al",  r.authLevel)
+                    .addValue("ip",  r.ip)
+                    .addValue("ua",  r.ua)
+                    .addValue("sid", r.sessId)
+                    .addValue("did", r.devId),
+            )
+        }
+
+        // ── message_log ──────────────────────────────────────────────
+        // action — Enum8('CREATE'=0, 'UPDATE'=1, 'DELETE'=2)
+        // msg_timestamp (Int64) и msg_seq_id (Int32) обязательны
+
+        data class MsgRow(
+            val offsetSec: Long, val action: String, val userId: String,
+            val topic: String, val content: String, val seqId: Int,
         )
 
-        // ClickHouse буферизует записи — ждём flush
+        listOf(
+            MsgRow(480, "CREATE", user1, topic1, "Hello",        1),
+            MsgRow(360, "CREATE", user2, topic1, "World",        2),
+            MsgRow(120, "UPDATE", user1, topic1, "Hello edited", 1),
+            MsgRow(60,  "DELETE", user1, topic2, "",             1),
+        ).forEach { r ->
+            jdbc.update(
+                """INSERT INTO audit.message_log
+               (log_id, log_timestamp, action,
+                msg_topic, msg_from_user_id,
+                msg_timestamp, msg_seq_id, msg_content)
+               VALUES
+               (:id, :ts, :act, :topic, :uid, :msgTs, :seqId, :content)""",
+                MapSqlParameterSource()
+                    .addValue("id",      UUID.randomUUID().toString())
+                    .addValue("ts",      chTs(now.minusSeconds(r.offsetSec)))
+                    .addValue("act",     r.action)
+                    .addValue("topic",   r.topic)
+                    .addValue("uid",     r.userId)
+                    .addValue("msgTs",   now.minusSeconds(r.offsetSec).toEpochMilli())
+                    .addValue("seqId",   r.seqId)
+                    .addValue("content", r.content),
+            )
+        }
+
         Thread.sleep(1000)
     }
-
     // ── findAuthEvents ────────────────────────────────────────────────────────
 
     @Test

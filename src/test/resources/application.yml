@@ -4,11 +4,26 @@ spring:
     allow-bean-definition-overriding: true
   flyway:
     enabled: false
+  application:
+    name: audit-service
+    datasource:
+      type: com.clickhouse.jdbc.ClickHouseDataSource
+    autoconfigure:
+      exclude:
+        - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+        - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+
 
 audit:
   incidents:
     # Отключаем scheduled detection в тестах — не нужен и мешает
     detection-interval-seconds: 999999
+
+clickhouse:
+  native-url: clickhouse://audit:changeme@localhost:9000/audit
+  http-url: http://localhost:8123
+  username: audit
+  password: changeme
 
 logging:
   level:

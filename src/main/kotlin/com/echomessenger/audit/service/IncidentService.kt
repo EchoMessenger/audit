@@ -22,9 +22,6 @@ class IncidentService(
 ) {
     private val log = LoggerFactory.getLogger(IncidentService::class.java)
 
-    /**
-     * Запускается каждые 5 минут. Выполняет все detection-правила.
-     */
     @Scheduled(fixedDelayString = "\${audit.incidents.detection-interval-seconds:300}000")
     fun runDetection() {
         log.debug("Running incident detection rules")
@@ -40,9 +37,6 @@ class IncidentService(
 
     // ── Rule: Brute Force ─────────────────────────────────────────────────────
 
-    /**
-     * Правило: > bruteForceThreshold LOGIN за bruteForceWindowMinutes минут с одного IP.
-     */
     private fun detectBruteForce() {
         val windowMs = bruteForceWindowMinutes * 60_000L
         val params =
@@ -54,19 +48,20 @@ class IncidentService(
         val suspects =
             jdbc.query(
                 """
-                SELECT client_ip, count() AS attempt_count
+                SELECT
+                    sess_remote_addr AS ip,
+                    count() AS attempt_count
                 FROM audit.client_req_log
                 WHERE msg_type = 'LOGIN'
-                  AND sess_auth_level = 0
-                  AND req_ts >= fromUnixTimestamp64Milli(:windowTs)
-                GROUP BY client_ip
+                  AND sess_auth_level = '0'
+                  AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                GROUP BY sess_remote_addr
                 HAVING attempt_count >= :threshold
                 """.trimIndent(),
                 params,
-            ) { rs, _ -> rs.getString("client_ip") to rs.getLong("attempt_count") }
+            ) { rs, _ -> rs.getString("ip") to rs.getLong("attempt_count") }
 
         suspects.forEach { (ip, count) ->
-            // Используем IP как userId для дедупликации — existsByTypeAndUserAndWindow ищет по user_id
             if (!incidentRepository.existsByTypeAndUserAndWindow("brute_force", ip, windowMs)) {
                 incidentRepository.upsert(
                     Incident(
@@ -74,7 +69,7 @@ class IncidentService(
                         type = "brute_force",
                         status = "open",
                         detectedAt = System.currentTimeMillis(),
-                        userId = ip, // IP хранится в userId для дедупликации
+                        userId = ip,
                         details =
                             mapOf(
                                 "ip" to ip,
@@ -91,11 +86,8 @@ class IncidentService(
 
     // ── Rule: Device Switch ───────────────────────────────────────────────────
 
-    /**
-     * Правило: разные sess_device_id в одной сессии (подозрение на session hijacking).
-     */
     private fun detectDeviceSwitch() {
-        val windowMs = 3_600_000L // 1 час
+        val windowMs = 3_600_000L
         val params = MapSqlParameterSource("windowTs", System.currentTimeMillis() - windowMs)
 
         val suspects =
@@ -103,11 +95,11 @@ class IncidentService(
                 """
                 SELECT sess_session_id, sess_user_id, uniqExact(sess_device_id) AS device_count
                 FROM audit.client_req_log
-                WHERE req_ts >= fromUnixTimestamp64Milli(:windowTs)
+                WHERE log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
                   AND sess_session_id != ''
                   AND sess_device_id != ''
                 GROUP BY sess_session_id, sess_user_id
-                HAVING device_count > 1
+                HAVING uniqExact(sess_device_id) > 1
                 """.trimIndent(),
                 params,
             ) { rs, _ ->
@@ -142,9 +134,6 @@ class IncidentService(
 
     // ── Rule: Mass Delete ─────────────────────────────────────────────────────
 
-    /**
-     * Правило: > massDeleteThreshold hard-delete за massDeleteWindowSeconds секунд от одного пользователя.
-     */
     private fun detectMassDelete() {
         val windowMs = massDeleteWindowSeconds * 1000L
         val params =
@@ -156,15 +145,18 @@ class IncidentService(
         val suspects =
             jdbc.query(
                 """
-                SELECT usr_id, count() AS delete_count
+                SELECT
+                    msg_from_user_id AS user_id,
+                    count() AS delete_count
                 FROM audit.message_log
-                WHERE msg_type = 'HDEL'
-                  AND msg_ts >= fromUnixTimestamp64Milli(:windowTs)
-                GROUP BY usr_id
+                WHERE toString(action) = 'DELETE'
+                  AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                  AND msg_from_user_id IS NOT NULL
+                GROUP BY msg_from_user_id
                 HAVING delete_count >= :threshold
                 """.trimIndent(),
                 params,
-            ) { rs, _ -> rs.getString("usr_id") to rs.getLong("delete_count") }
+            ) { rs, _ -> rs.getString("user_id") to rs.getLong("delete_count") }
 
         suspects.forEach { (userId, count) ->
             if (!incidentRepository.existsByTypeAndUserAndWindow("mass_delete", userId, windowMs)) {
@@ -190,12 +182,9 @@ class IncidentService(
 
     // ── Rule: Volume Anomaly ──────────────────────────────────────────────────
 
-    /**
-     * Правило: текущая активность пользователя превышает его median за последние 30 дней в volumeAnomalyMultiplier раз.
-     */
     private fun detectVolumeAnomaly() {
-        val currentWindowMs = 3_600_000L // последний час как "текущая" активность
-        val baselineWindowMs = 30L * 24 * 3_600_000L // 30 дней baseline
+        val currentWindowMs = 3_600_000L
+        val baselineWindowMs = 30L * 24 * 3_600_000L
 
         val params =
             MapSqlParameterSource().apply {
@@ -208,35 +197,35 @@ class IncidentService(
             jdbc.query(
                 """
                 SELECT
-                    usr_id,
+                    msg_from_user_id AS user_id,
                     current_count,
                     median_hourly,
                     current_count / median_hourly AS ratio
                 FROM (
                     SELECT
-                        usr_id,
-                        countIf(msg_ts >= fromUnixTimestamp64Milli(:currentWindowTs)) AS current_count,
-                        -- Median часовой активности за последние 30 дней
+                        msg_from_user_id,
+                        countIf(hour >= toStartOfHour(fromUnixTimestamp64Milli(:currentWindowTs))) AS current_count,
                         medianExact(hourly_count) AS median_hourly
                     FROM (
                         SELECT
-                            usr_id,
-                            toStartOfHour(msg_ts) AS hour,
+                            msg_from_user_id,
+                            toStartOfHour(log_timestamp) AS hour,
                             count() AS hourly_count
                         FROM audit.message_log
-                        WHERE msg_ts >= fromUnixTimestamp64Milli(:baselineWindowTs)
-                        GROUP BY usr_id, hour
+                        WHERE log_timestamp >= fromUnixTimestamp64Milli(:baselineWindowTs)
+                          AND msg_from_user_id IS NOT NULL
+                        GROUP BY msg_from_user_id, hour
                     )
-                    GROUP BY usr_id
+                    GROUP BY msg_from_user_id
                 )
                 WHERE median_hourly > 0
-                  AND current_count > 10  -- игнорируем пользователей с малой активностью
+                  AND current_count > 10
                   AND current_count / median_hourly >= :multiplier
                 """.trimIndent(),
                 params,
             ) { rs, _ ->
                 Triple(
-                    rs.getString("usr_id"),
+                    rs.getString("user_id"),
                     rs.getLong("current_count"),
                     rs.getDouble("ratio"),
                 )

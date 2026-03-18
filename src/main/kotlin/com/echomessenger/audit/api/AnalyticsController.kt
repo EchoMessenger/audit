@@ -1,7 +1,6 @@
 package com.echomessenger.audit.api
 
 import com.echomessenger.audit.repository.SummaryResult
-import com.echomessenger.audit.repository.TimeseriesPoint
 import com.echomessenger.audit.service.AnalyticsService
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.prepost.PreAuthorize
