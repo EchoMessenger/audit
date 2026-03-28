@@ -101,7 +101,12 @@ class AuditRepository(
                 sess_remote_addr                                           AS ip,
                 sess_user_agent                                            AS user_agent,
                 sess_device_id                                             AS device_id,
-                sess_session_id
+                sess_session_id,
+                sub_topic,
+                get_what,
+                set_topic,
+                del_what,
+                del_user_id
             FROM audit.client_req_log
             WHERE $conditions
             ORDER BY log_timestamp DESC
@@ -170,7 +175,12 @@ class AuditRepository(
                 ''                                     AS ip,
                 ''                                     AS user_agent,
                 ''                                     AS device_id,
-                ''                                     AS sess_session_id
+                ''                                     AS sess_session_id,
+                NULL                                   AS sub_topic,
+                NULL                                   AS get_what,
+                NULL                                   AS set_topic,
+                NULL                                   AS del_what,
+                NULL                                   AS del_user_id
             FROM audit.message_log
             WHERE $conditions
             ORDER BY log_timestamp DESC
@@ -196,7 +206,12 @@ class AuditRepository(
                         sess_remote_addr                                       AS ip,
                         sess_user_agent                                        AS user_agent,
                         sess_device_id                                         AS device_id,
-                        sess_session_id
+                                sess_session_id,
+                                sub_topic,
+                                get_what,
+                                set_topic,
+                                del_what,
+                                del_user_id
                     FROM audit.client_req_log
                     WHERE log_id = toUUID(:eventId)
                     LIMIT 1
@@ -225,7 +240,12 @@ class AuditRepository(
                     ''                                     AS ip,
                     ''                                     AS user_agent,
                     ''                                     AS device_id,
-                    ''                                     AS sess_session_id
+                    ''                                     AS sess_session_id,
+                    NULL                                   AS sub_topic,
+                    NULL                                   AS get_what,
+                    NULL                                   AS set_topic,
+                    NULL                                   AS del_what,
+                    NULL                                   AS del_user_id
                 FROM audit.message_log
                 WHERE toString(log_id) = :eventId
                 LIMIT 1
@@ -277,7 +297,12 @@ class AuditRepository(
                     sess_remote_addr                                       AS ip,
                     sess_user_agent                                        AS user_agent,
                     sess_device_id                                         AS device_id,
-                    sess_session_id
+                          sess_session_id,
+                          sub_topic,
+                          get_what,
+                          set_topic,
+                          del_what,
+                          del_user_id
                 FROM audit.client_req_log
                 WHERE ${conditions.joinToString(" AND ")}
                 ORDER BY log_timestamp DESC
@@ -303,9 +328,15 @@ class AuditRepository(
     private fun mapRowToAuditEvent(rs: ResultSet): AuditEvent {
         val msgType = rs.getString("msg_type") ?: ""
         val userId = rs.getString("user_id")?.takeIf { it.isNotBlank() }
+        val subTopic = rs.getString("sub_topic")?.takeIf { it.isNotBlank() }
+        val getWhat = rs.getString("get_what")?.takeIf { it.isNotBlank() }
+        val setTopic = rs.getString("set_topic")?.takeIf { it.isNotBlank() }
+        val delWhat = rs.getString("del_what")?.takeIf { it.isNotBlank() }
+        val delUserId = rs.getString("del_user_id")?.takeIf { it.isNotBlank() }
+
         return AuditEvent(
             eventId = rs.getString("event_id"),
-            eventType = mapMsgTypeToEventType(msgType),
+            eventType = mapMsgTypeToEventType(msgType, subTopic, getWhat, setTopic, delWhat),
             timestamp = rs.getLong("timestamp"),
             userId = userId,
             actorUserId = userId,
@@ -314,6 +345,11 @@ class AuditRepository(
             metadata =
                 buildMap {
                     if (msgType.isNotBlank()) put("msg_type", msgType)
+                    subTopic?.let { put("sub_topic", it) }
+                    getWhat?.let { put("get_what", it) }
+                    setTopic?.let { put("set_topic", it) }
+                    delWhat?.let { put("del_what", it) }
+                    delUserId?.let { put("del_user_id", it) }
                     rs
                         .getString("sess_session_id")
                         ?.takeIf { it.isNotBlank() }
@@ -326,6 +362,59 @@ class AuditRepository(
     }
 
     companion object {
+        fun mapMsgTypeToEventType(
+            msgType: String,
+            subTopic: String?,
+            getWhat: String?,
+            setTopic: String?,
+            delWhat: String?,
+        ): String {
+            val msg = msgType.uppercase()
+            return when (msg) {
+                "SUB" -> {
+                    val topic = subTopic?.trim()?.lowercase().orEmpty()
+                    when {
+                        topic == "new" -> "topic.create"
+                        topic == "me" -> "subscription.me"
+                        topic == "fnd" -> "search.query"
+                        topic.startsWith("grp") -> "subscription.join"
+                        topic.startsWith("usr") -> "subscription.join"
+                        topic.isBlank() -> "subscription.update"
+                        else -> "subscription.update"
+                    }
+                }
+
+                "DEL" -> {
+                    when (delWhat?.trim()?.uppercase()) {
+                        "MSG" -> "message.delete"
+                        "TOPIC" -> "topic.delete"
+                        "SUB" -> "subscription.leave"
+                        "USER" -> "account.delete"
+                        "CRED" -> "credential.delete"
+                        null, "" -> "message.delete"
+                        else -> "unknown.$msgType"
+                    }
+                }
+
+                "GET" -> {
+                    val what = getWhat?.trim()?.lowercase().orEmpty()
+                    when {
+                        what.contains("sub") -> "subscription.read"
+                        what.contains("desc") || what.contains("data") || what.contains("tags") -> "topic.read"
+                        what.contains("cred") -> "credential.read"
+                        what.isBlank() -> "topic.read"
+                        else -> "topic.read"
+                    }
+                }
+
+                "SET" -> {
+                    if (!setTopic.isNullOrBlank()) "topic.update" else "account.update"
+                }
+
+                else -> mapMsgTypeToEventType(msgType)
+            }
+        }
+
         fun mapMsgTypeToEventType(msgType: String): String =
             when (msgType.uppercase()) {
                 "LOGIN" -> "auth.login"

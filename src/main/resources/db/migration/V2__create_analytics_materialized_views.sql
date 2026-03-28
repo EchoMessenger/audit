@@ -11,9 +11,9 @@ ORDER BY (day, msg_type)
 POPULATE
 AS
 SELECT
-    toDate(req_ts)  AS day,
+    toDate(log_timestamp) AS day,
     msg_type,
-    count()         AS cnt
+    count()               AS cnt
 FROM audit.client_req_log
 GROUP BY day, msg_type;
 
@@ -26,10 +26,11 @@ ORDER BY (day, usr_id)
 POPULATE
 AS
 SELECT
-    toDate(msg_ts) AS day,
-    usr_id,
-    count()        AS event_count
-FROM audit.message_log
+    toDate(log_timestamp) AS day,
+    sess_user_id          AS usr_id,
+    count()               AS event_count
+FROM audit.client_req_log
+WHERE sess_user_id != ''
 GROUP BY day, usr_id;
 
 -- ── mv_hourly_load_stats ──────────────────────────────────────────────────────
@@ -41,9 +42,9 @@ ORDER BY (hour_ts, msg_type)
 POPULATE
 AS
 SELECT
-    toStartOfHour(req_ts) AS hour_ts,
+    toStartOfHour(log_timestamp) AS hour_ts,
     msg_type,
-    count()               AS event_count
+    count()                     AS event_count
 FROM audit.client_req_log
 GROUP BY hour_ts, msg_type;
 
@@ -56,8 +57,13 @@ ORDER BY (day, msg_type)
 POPULATE
 AS
 SELECT
-    toDate(msg_ts) AS day,
-    msg_type,
-    count()        AS cnt
+    toDate(log_timestamp) AS day,
+    multiIf(
+        toString(action) = 'CREATE', 'PUB',
+        toString(action) = 'UPDATE', 'EDIT',
+        toString(action) = 'DELETE', 'DEL',
+        toString(action)
+    ) AS msg_type,
+    count()               AS cnt
 FROM audit.message_log
 GROUP BY day, msg_type;

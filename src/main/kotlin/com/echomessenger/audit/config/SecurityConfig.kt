@@ -10,6 +10,9 @@ import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 @Configuration
 @EnableWebSecurity
@@ -19,18 +22,22 @@ class SecurityConfig {
     fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
         http
             .csrf { it.disable() }
+            .cors { }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests { auth ->
                 // Actuator — доступен без токена (проверяется на отдельном порту 8081)
                 auth.requestMatchers("/actuator/**").permitAll()
 
-                // Все audit/analytics эндпоинты требуют минимум audit:read
-                auth.requestMatchers("/api/v1/**").hasAnyRole("audit_read", "audit_admin")
+                // Preflight CORS запросы не должны требовать Bearer токен.
+                auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                 // Статус инцидентов — только admin
                 auth
                     .requestMatchers(HttpMethod.POST, "/api/v1/incidents/*/status")
                     .hasRole("audit_admin")
+
+                // Все audit/analytics эндпоинты требуют минимум audit:read
+                auth.requestMatchers("/api/v1/**").hasAnyRole("audit_read", "audit_admin")
 
                 auth.anyRequest().authenticated()
             }.oauth2ResourceServer { oauth2 ->
@@ -58,4 +65,23 @@ class SecurityConfig {
                     .map { SimpleGrantedAuthority("ROLE_${it.replace(":", "_")}") }
             }
         }
+
+    @Bean
+    fun corsConfigurationSource(): CorsConfigurationSource {
+        val config = CorsConfiguration().apply {
+            allowedOriginPatterns = listOf(
+                "https://*.echo-messenger.ru",
+                "http://localhost:*"
+            )
+            allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+            allowedHeaders = listOf("Authorization", "Content-Type", "Accept", "Origin")
+            exposedHeaders = listOf("Authorization")
+            allowCredentials = true
+            maxAge = 3600
+        }
+
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/**", config)
+        }
+    }
 }

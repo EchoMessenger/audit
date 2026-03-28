@@ -4,9 +4,11 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.AccessDeniedException
+import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
+import org.springframework.web.servlet.resource.NoResourceFoundException
 
 data class ErrorResponse(
     val error: String,
@@ -49,7 +51,7 @@ class GlobalExceptionHandler {
             .body(
                 ErrorResponse(
                     error = "FORBIDDEN",
-                    message = "Insufficient permissions",
+                    message = e.message ?: "Insufficient permissions",
                     status = 403,
                 ),
             )
@@ -63,6 +65,30 @@ class GlobalExceptionHandler {
                     error = "BAD_REQUEST",
                     message = "Invalid parameter '${e.name}': ${e.message}",
                     status = 400,
+                ),
+            )
+
+    @ExceptionHandler(MissingServletRequestParameterException::class)
+    fun handleMissingParameter(e: MissingServletRequestParameterException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.BAD_REQUEST)
+            .body(
+                ErrorResponse(
+                    error = "BAD_REQUEST",
+                    message = "Missing required parameter '${e.parameterName}'",
+                    status = 400,
+                ),
+            )
+
+    @ExceptionHandler(NoResourceFoundException::class)
+    fun handleNoResource(e: NoResourceFoundException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.NOT_FOUND)
+            .body(
+                ErrorResponse(
+                    error = "NOT_FOUND",
+                    message = e.message ?: "Resource not found",
+                    status = 404,
                 ),
             )
 

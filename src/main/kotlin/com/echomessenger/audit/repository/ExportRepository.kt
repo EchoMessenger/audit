@@ -19,9 +19,9 @@ class ExportRepository(
             INSERT INTO audit.export_job_log
                 (export_id, status, format, created_at, completed_at, download_url, error_message, file_size_bytes)
             VALUES
-                (:exportId, :status, :format,
+                (toUUID(:exportId), :status, :format,
                  fromUnixTimestamp64Milli(:createdAt),
-                 ${if (job.completedAt != null) "fromUnixTimestamp64Milli(:completedAt)" else "NULL"},
+                 ${if (job.completedAt != null) "fromUnixTimestamp64Milli(:completedAt)" else "toDateTime64(0, 3)"},
                  :downloadUrl, :errorMessage, :fileSizeBytes)
             """.trimIndent(),
             MapSqlParameterSource().apply {

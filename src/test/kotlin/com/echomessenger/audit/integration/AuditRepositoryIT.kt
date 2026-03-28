@@ -240,4 +240,65 @@ class AuditRepositoryIT : IntegrationTestBase() {
         assertTrue(msgTypes!!.isNotEmpty(), "msgTypes should not be empty")
         assertEquals(eventType, AuditRepository.mapMsgTypeToEventType(msgTypes.first()))
     }
+
+    @Test
+    fun `contextual mapping resolves SUB by sub_topic`() {
+        assertEquals(
+            "subscription.me",
+            AuditRepository.mapMsgTypeToEventType(
+                msgType = "SUB",
+                subTopic = "me",
+                getWhat = null,
+                setTopic = null,
+                delWhat = null,
+            ),
+        )
+
+        assertEquals(
+            "topic.create",
+            AuditRepository.mapMsgTypeToEventType(
+                msgType = "SUB",
+                subTopic = "new",
+                getWhat = null,
+                setTopic = null,
+                delWhat = null,
+            ),
+        )
+
+        assertEquals(
+            "subscription.join",
+            AuditRepository.mapMsgTypeToEventType(
+                msgType = "SUB",
+                subTopic = "grp_general",
+                getWhat = null,
+                setTopic = null,
+                delWhat = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `contextual mapping resolves DEL by del_what`() {
+        assertEquals(
+            "message.delete",
+            AuditRepository.mapMsgTypeToEventType(
+                msgType = "DEL",
+                subTopic = null,
+                getWhat = null,
+                setTopic = null,
+                delWhat = "MSG",
+            ),
+        )
+
+        assertEquals(
+            "subscription.leave",
+            AuditRepository.mapMsgTypeToEventType(
+                msgType = "DEL",
+                subTopic = null,
+                getWhat = null,
+                setTopic = null,
+                delWhat = "SUB",
+            ),
+        )
+    }
 }
