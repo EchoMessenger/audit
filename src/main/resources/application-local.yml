@@ -1,0 +1,16 @@
+clickhouse:
+  url: jdbc:clickhouse://localhost:8123/audit
+  user: default
+  password: ""
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/echo
+
+logging:
+  level:
+    com.echomessenger.audit: debug
+    com.clickhouse: info

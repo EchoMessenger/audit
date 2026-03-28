@@ -1,0 +1,83 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  server:
+    port: ${HEALTH_PORT:8081}
+  endpoints:
+    web:
+      exposure:
+        include: health,readiness,liveness,prometheus,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  tracing:
+    sampling:
+      probability: 0.1
+
+spring:
+  application:
+    name: audit-service
+    datasource:
+      type: com.clickhouse.jdbc.ClickHouseDataSource  # не используем — просто отключаем HikariCP autoconfigure
+    autoconfigure:
+      exclude:
+        - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+        - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://keycloak:8080/realms/echo}
+          jwk-set-uri: ${KEYCLOAK_ISSUER_URI:http://keycloak:8080/realms/echo}/protocol/openid-connect/certs
+
+  flyway:
+    enabled: false
+
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=300s
+
+clickhouse:
+  http-url: ${CLICKHOUSE_HTTP_URL:http://clickhouse:8123}
+  username: ${CLICKHOUSE_USERNAME:audit}
+  password: ${CLICKHOUSE_PASSWORD:changeme}
+  database: ${CLICKHOUSE_DATABASE:audit}
+
+audit:
+  export:
+    storage-type: ${EXPORT_STORAGE_TYPE:pvc}
+    pvc-path: ${EXPORT_PVC_PATH:/exports}
+    s3:
+      bucket: ${EXPORT_S3_BUCKET:audit-exports}
+      region: ${EXPORT_S3_REGION:us-east-1}
+  rate-limit:
+    reports-per-minute: 5
+    export-per-minute: 2
+  incidents:
+    detection-interval-seconds: 300
+    rules:
+      brute-force-threshold: 10
+      brute-force-window-minutes: 5
+      mass-delete-threshold: 5
+      mass-delete-window-seconds: 60
+      volume-anomaly-multiplier: 10.0
+
+logging:
+  level:
+    root: ${LOG_LEVEL:info}
+    com.echomessenger.audit: ${LOG_LEVEL:info}
+    com.clickhouse: warn
