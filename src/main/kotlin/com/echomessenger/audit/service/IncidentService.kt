@@ -277,10 +277,14 @@ class IncidentService(
             incidentRepository.findById(incidentId)
                 ?: throw NoSuchElementException("Incident not found: $incidentId")
 
+        val detailsPatch =
+            buildMap {
+                if (!comment.isNullOrBlank()) put("admin_comment", comment)
+            }
         val updated =
             existing.copy(
                 status = status,
-                details = existing.details + mapOf("admin_comment" to comment),
+                details = existing.details + detailsPatch,
                 updatedAt = System.currentTimeMillis(),
             )
         incidentRepository.upsert(updated)

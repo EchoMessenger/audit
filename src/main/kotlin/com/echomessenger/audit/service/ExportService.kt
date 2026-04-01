@@ -20,6 +20,7 @@ import java.util.UUID
 class ExportService(
     private val exportRepository: ExportRepository,
     private val messageRepository: MessageRepository,
+    private val userNameResolver: UserNameResolver,
     @Value("\${audit.export.storage-type:pvc}") private val storageType: String,
     @Value("\${audit.export.pvc-path:/exports}") private val pvcPath: String,
 ) {
@@ -71,14 +72,7 @@ class ExportService(
         outputFile.parentFile?.mkdirs()
 
         try {
-            val messageReportReq =
-                MessageReportRequest(
-                    users = request.filters.userId?.let { listOf(it) },
-                    topics = request.filters.topicId?.let { listOf(it) },
-                    fromTs = request.filters.fromTs ?: 0L,
-                    toTs = request.filters.toTs ?: System.currentTimeMillis(),
-                    includeDeleted = false,
-                )
+            val messageReportReq = request.filters.toMessageReportRequest()
 
             BufferedWriter(FileWriter(outputFile)).use { writer ->
                 when (job.format) {
@@ -119,14 +113,15 @@ class ExportService(
         writer.newLine()
 
         messageRepository.streamMessages(req, batchSize = 1000) { batch ->
-            batch.forEach { msg ->
+            val enriched = userNameResolver.enrichMissingUserNames(batch)
+            enriched.forEach { msg ->
                 val content =
                     msg.content
                         ?.replace("\"", "\"\"") // CSV escaping
                         ?.let { "\"$it\"" }
                         ?: ""
                 val userName = msg.userName?.replace("\"", "\"\"")?.let { "\"$it\"" } ?: ""
-                writer.write("${msg.messageId},${msg.topicId},${msg.userId},$userName,${msg.timestamp},$content,${msg.isDeleted}")
+                writer.write("${msg.messageId},${msg.topicId},${msg.userId ?: ""},$userName,${msg.timestamp},$content,${msg.isDeleted}")
                 writer.newLine()
             }
         }
@@ -140,7 +135,8 @@ class ExportService(
         var first = true
 
         messageRepository.streamMessages(req, batchSize = 1000) { batch ->
-            batch.forEach { msg ->
+            val enriched = userNameResolver.enrichMissingUserNames(batch)
+            enriched.forEach { msg ->
                 if (!first) writer.write(",")
                 writer.newLine()
                 writer.write(mapper.writeValueAsString(msg))
@@ -150,6 +146,18 @@ class ExportService(
 
         writer.newLine()
         writer.write("]")
+    }
+
+    private fun ExportFilters.toMessageReportRequest(): MessageReportRequest {
+        val userList = users?.takeIf { it.isNotEmpty() } ?: userId?.let { listOf(it) }
+        val topicList = topics?.takeIf { it.isNotEmpty() } ?: topicId?.let { listOf(it) }
+        return MessageReportRequest(
+            users = userList,
+            topics = topicList,
+            fromTs = fromTs ?: 0L,
+            toTs = toTs ?: System.currentTimeMillis(),
+            includeDeleted = includeDeleted ?: false,
+        )
     }
 
     private fun resolveOutputFile(

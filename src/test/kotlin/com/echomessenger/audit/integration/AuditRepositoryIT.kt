@@ -1,6 +1,7 @@
 package com.echomessenger.audit.integration
 
 import com.echomessenger.audit.repository.AuditRepository
+import com.echomessenger.audit.support.AuditEventMapping
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -226,7 +227,7 @@ class AuditRepositoryIT : IntegrationTestBase() {
         mappings.forEach { (msgType, expected) ->
             assertEquals(
                 expected,
-                AuditRepository.mapMsgTypeToEventType(msgType),
+                AuditEventMapping.mapSimpleMsgTypeToEventType(msgType),
                 "msg_type=$msgType should map to event_type=$expected",
             )
         }
@@ -235,17 +236,17 @@ class AuditRepositoryIT : IntegrationTestBase() {
     @Test
     fun `mapEventTypeToMsgTypes is inverse of mapMsgTypeToEventType`() {
         val eventType = "message.create"
-        val msgTypes = AuditRepository.mapEventTypeToMsgTypes(eventType)
+        val msgTypes = AuditEventMapping.mapEventTypeToMsgTypes(eventType)
         assertNotNull(msgTypes, "Should return msgTypes for event_type=$eventType")
         assertTrue(msgTypes!!.isNotEmpty(), "msgTypes should not be empty")
-        assertEquals(eventType, AuditRepository.mapMsgTypeToEventType(msgTypes.first()))
+        assertEquals(eventType, AuditEventMapping.mapSimpleMsgTypeToEventType(msgTypes.first()))
     }
 
     @Test
     fun `contextual mapping resolves SUB by sub_topic`() {
         assertEquals(
             "subscription.me",
-            AuditRepository.mapMsgTypeToEventType(
+            AuditEventMapping.mapMsgTypeToEventType(
                 msgType = "SUB",
                 subTopic = "me",
                 getWhat = null,
@@ -256,7 +257,7 @@ class AuditRepositoryIT : IntegrationTestBase() {
 
         assertEquals(
             "topic.create",
-            AuditRepository.mapMsgTypeToEventType(
+            AuditEventMapping.mapMsgTypeToEventType(
                 msgType = "SUB",
                 subTopic = "new",
                 getWhat = null,
@@ -267,7 +268,7 @@ class AuditRepositoryIT : IntegrationTestBase() {
 
         assertEquals(
             "subscription.join",
-            AuditRepository.mapMsgTypeToEventType(
+            AuditEventMapping.mapMsgTypeToEventType(
                 msgType = "SUB",
                 subTopic = "grp_general",
                 getWhat = null,
@@ -281,7 +282,7 @@ class AuditRepositoryIT : IntegrationTestBase() {
     fun `contextual mapping resolves DEL by del_what`() {
         assertEquals(
             "message.delete",
-            AuditRepository.mapMsgTypeToEventType(
+            AuditEventMapping.mapMsgTypeToEventType(
                 msgType = "DEL",
                 subTopic = null,
                 getWhat = null,
@@ -292,7 +293,7 @@ class AuditRepositoryIT : IntegrationTestBase() {
 
         assertEquals(
             "subscription.leave",
-            AuditRepository.mapMsgTypeToEventType(
+            AuditEventMapping.mapMsgTypeToEventType(
                 msgType = "DEL",
                 subTopic = null,
                 getWhat = null,

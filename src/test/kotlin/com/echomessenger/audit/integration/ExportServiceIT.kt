@@ -4,6 +4,7 @@ import com.echomessenger.audit.domain.*
 import com.echomessenger.audit.repository.ExportRepository
 import com.echomessenger.audit.repository.MessageRepository
 import com.echomessenger.audit.service.ExportService
+import com.echomessenger.audit.service.UserNameResolver
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -26,12 +27,14 @@ class ExportServiceIT : IntegrationTestBase() {
     @Autowired private lateinit var exportRepository: ExportRepository
     @Autowired private lateinit var messageRepository: MessageRepository
     @Autowired private lateinit var jdbc: NamedParameterJdbcTemplate
+    private val userNameResolver: UserNameResolver = io.mockk.mockk(relaxed = true)
 
     @TempDir lateinit var tempDir: Path
 
     private fun service() = ExportService(
         exportRepository = exportRepository,
         messageRepository = messageRepository,
+        userNameResolver = userNameResolver,
         storageType = "pvc",
         pvcPath = tempDir.toString(),
     )

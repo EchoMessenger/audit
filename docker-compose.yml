@@ -1,0 +1,19 @@
+services:
+  audit:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      - SERVER_PORT=8080
+      - HEALTH_PORT=8081
+      - RESTAUTH_BASE_URL=http://host.docker.internal:8000
+      - USER_RESOLUTION_CACHE_TTL=3600
+      - USER_RESOLUTION_CACHE_SIZE=10000
+      - CLICKHOUSE_HTTP_URL=http://host.docker.internal:8123
+      - CLICKHOUSE_USERNAME=audit
+      - CLICKHOUSE_PASSWORD=changeme
+      - CLICKHOUSE_DATABASE=audit
+    depends_on: []
+    volumes:
+      - ./logs:/app/logs
