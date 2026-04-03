@@ -15,6 +15,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.*
 import java.io.File
+import java.net.URI
 
 @RestController
 @RequestMapping("/api/v1/audit/export")
@@ -85,6 +86,16 @@ class ExportController(
 
         if (job.status.name != "completed") {
             return ResponseEntity.status(HttpStatus.ACCEPTED).build()
+        }
+
+        if (exportService.isS3Storage()) {
+            if (!exportService.hasS3Object(exportId, job.format)) {
+                return ResponseEntity.notFound().build()
+            }
+            val presignedUrl = exportService.generatePresignedDownloadUrl(exportId, job.format)
+            return ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(presignedUrl))
+                .build()
         }
 
         val file = File("$pvcPath/$exportId.${job.format.name}")

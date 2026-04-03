@@ -11,6 +11,15 @@ import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import software.amazon.awssdk.core.sync.RequestBody
+import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.model.GetObjectRequest
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest
+import software.amazon.awssdk.services.s3.model.PutObjectRequest
+import software.amazon.awssdk.services.s3.model.S3Exception
+import software.amazon.awssdk.services.s3.presigner.S3Presigner
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest
+import java.time.Duration
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -23,6 +32,11 @@ class ExportService(
     private val userNameResolver: UserNameResolver,
     @Value("\${audit.export.storage-type:pvc}") private val storageType: String,
     @Value("\${audit.export.pvc-path:/exports}") private val pvcPath: String,
+    @Value("\${audit.export.s3.bucket:audit-exports}") private val s3Bucket: String = "audit-exports",
+    @Value("\${audit.export.s3.key-prefix:audit/exports}") private val s3KeyPrefix: String = "audit/exports",
+    @Value("\${audit.export.s3.presign-expiry-seconds:900}") private val s3PresignExpirySeconds: Long = 900,
+    private val s3Client: S3Client? = null,
+    private val s3Presigner: S3Presigner? = null,
 ) {
     private val log = LoggerFactory.getLogger(ExportService::class.java)
     private val mapper = jacksonObjectMapper()
@@ -70,6 +84,7 @@ class ExportService(
 
         val outputFile = resolveOutputFile(job.exportId, job.format)
         outputFile.parentFile?.mkdirs()
+        val objectKey = buildS3ObjectKey(job.exportId, job.format)
 
         try {
             val messageReportReq = request.filters.toMessageReportRequest()
@@ -81,16 +96,21 @@ class ExportService(
                 }
             }
 
-            val downloadUrl = resolveDownloadUrl(job.exportId, job.format)
+            if (isS3Storage()) {
+                uploadToS3(outputFile, objectKey, job.format)
+            }
+
+            val downloadUrl = resolveDownloadUrl(job.exportId)
+            val fileSizeBytes = outputFile.length()
             exportRepository.save(
                 job.copy(
                     status = ExportStatus.completed,
                     completedAt = System.currentTimeMillis(),
                     downloadUrl = downloadUrl,
-                    fileSizeBytes = outputFile.length(),
+                    fileSizeBytes = fileSizeBytes,
                 ),
             )
-            log.info("Export completed exportId={} bytes={}", job.exportId, outputFile.length())
+            log.info("Export completed exportId={} bytes={} storageType={}", job.exportId, fileSizeBytes, storageType)
         } catch (e: Exception) {
             log.error("Export failed exportId={}", job.exportId, e)
             exportRepository.save(
@@ -101,7 +121,62 @@ class ExportService(
                 ),
             )
             outputFile.delete()
+        } finally {
+            if (isS3Storage() && outputFile.exists()) {
+                outputFile.delete()
+            }
         }
+    }
+
+    fun isS3Storage(): Boolean = storageType.equals("s3", ignoreCase = true)
+
+    fun hasS3Object(
+        exportId: String,
+        format: ExportFormat,
+    ): Boolean {
+        if (!isS3Storage()) return false
+        val s3 = requireNotNull(s3Client) { "S3 client is not configured while storageType=s3" }
+        val key = buildS3ObjectKey(exportId, format)
+
+        return try {
+            s3.headObject(
+                HeadObjectRequest.builder()
+                    .bucket(s3Bucket)
+                    .key(key)
+                    .build(),
+            )
+            true
+        } catch (e: S3Exception) {
+            if (e.statusCode() == 404) {
+                false
+            } else {
+                throw e
+            }
+        }
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    fun generatePresignedDownloadUrl(
+        exportId: String,
+        format: ExportFormat,
+    ): String {
+        require(isS3Storage()) { "Presigned URL is available only for storageType=s3" }
+        val presigner = requireNotNull(s3Presigner) { "S3 presigner is not configured while storageType=s3" }
+        val key = buildS3ObjectKey(exportId, format)
+
+        val getObjectRequest =
+            GetObjectRequest.builder()
+                .bucket(s3Bucket)
+                .key(key)
+                .build()
+
+        val presignRequest =
+            GetObjectPresignRequest.builder()
+                .signatureDuration(Duration.ofSeconds(s3PresignExpirySeconds.coerceAtLeast(60L)))
+                .getObjectRequest(getObjectRequest)
+                .build()
+
+        return presigner.presignGetObject(presignRequest).url().toString()
     }
 
     private fun exportCsv(
@@ -173,12 +248,41 @@ class ExportService(
             else -> File("/tmp/audit-export-$exportId.${format.name}")
         }
 
-    private fun resolveDownloadUrl(
-        exportId: String,
-        format: ExportFormat,
-    ): String =
+    private fun resolveDownloadUrl(exportId: String): String =
         when (storageType.lowercase()) {
             "pvc" -> "/api/v1/audit/export/$exportId/download"
             else -> "/api/v1/audit/export/$exportId/download"
         }
+
+    private fun uploadToS3(
+        outputFile: File,
+        objectKey: String,
+        format: ExportFormat,
+    ) {
+        val s3 = requireNotNull(s3Client) { "S3 client is not configured while storageType=s3" }
+
+        s3.putObject(
+            PutObjectRequest.builder()
+                .bucket(s3Bucket)
+                .key(objectKey)
+                .contentType(resolveContentType(format))
+                .build(),
+            RequestBody.fromFile(outputFile),
+        )
+    }
+
+    private fun resolveContentType(format: ExportFormat): String =
+        when (format) {
+            ExportFormat.csv -> "text/csv"
+            ExportFormat.json -> "application/json"
+        }
+
+    private fun buildS3ObjectKey(
+        exportId: String,
+        format: ExportFormat,
+    ): String {
+        val prefix = s3KeyPrefix.trim().trim('/')
+        val fileName = "$exportId.${format.name}"
+        return if (prefix.isBlank()) fileName else "$prefix/$fileName"
+    }
 }

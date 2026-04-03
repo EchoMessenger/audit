@@ -12,6 +12,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.CorsUtils
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 @Configuration
@@ -28,7 +29,10 @@ class SecurityConfig {
                 // Actuator — доступен без токена (проверяется на отдельном порту 8081)
                 auth.requestMatchers("/actuator/**").permitAll()
 
-                // Preflight CORS запросы не должны требовать Bearer токен.
+                // Надежный matcher для CORS preflight (OPTIONS + Origin + Access-Control-Request-Method).
+                auth.requestMatchers(CorsUtils::isPreFlightRequest).permitAll()
+
+                // Явно оставляем permitAll для всех OPTIONS на случай нестандартных клиентов.
                 auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                 // Статус инцидентов — только admin

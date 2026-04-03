@@ -55,6 +55,10 @@ dependencies {
     implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("io.micrometer:micrometer-tracing-bridge-otel")
 
+    // Object storage (S3 / MinIO)
+    implementation(platform("software.amazon.awssdk:bom:2.32.18"))
+    implementation("software.amazon.awssdk:s3")
+
     // Testing
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
