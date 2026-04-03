@@ -1,5 +1,6 @@
 package com.echomessenger.audit.repository
 
+import com.echomessenger.audit.support.AuditEventMapping
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.cache.annotation.Cacheable
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
@@ -36,7 +37,7 @@ class AnalyticsRepository(
             GROUP BY msg_type
             """.trimIndent(), params,
         ) { rs, _ -> rs.getString("msg_type") to rs.getLong("total") }
-            .associate { (type, count) -> AuditRepository.mapMsgTypeToEventType(type) to count }
+            .associate { (type, count) -> AuditEventMapping.mapSimpleMsgTypeToEventType(type) to count }
 
         val topUsers = jdbc.query(
             """

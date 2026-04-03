@@ -3,11 +3,13 @@ package com.echomessenger.audit.repository
 import com.echomessenger.audit.domain.AuditEvent
 import com.echomessenger.audit.domain.CursorCodec
 import com.echomessenger.audit.domain.CursorPage
+import com.echomessenger.audit.support.AuditEventMapping
+import com.echomessenger.audit.support.AuditEventSort
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.stereotype.Repository
-import java.sql.ResultSet
+import java.util.UUID
 
 @Repository
 class AuditRepository(
@@ -25,39 +27,145 @@ class AuditRepository(
         cursor: String? = null,
         limit: Int = 100,
     ): CursorPage<AuditEvent> {
-        val (cursorTs, _) = if (cursor != null) CursorCodec.decode(cursor) else null to null
+        if (eventType != null && AuditEventMapping.mapEventTypeToMsgTypes(eventType) == null) {
+            throw IllegalArgumentException(
+                "Unsupported eventType for unified feed: $eventType. Use a supported type or omit the filter.",
+            )
+        }
+
+        val (cursorTs, cursorLogId) = decodeCursor(cursor)
+
         val effectiveLimit = limit.coerceIn(1, 1000)
-        val msgTypes = eventType?.let { mapEventTypeToMsgTypes(it) }
+        val msgTypes = eventType?.let { AuditEventMapping.mapEventTypeToMsgTypes(it) }
+        val uid = userId ?: actorUserId
+
+        // Два потока (client + message) при фильтре по пользователю: стабильный merge в памяти (cap 10k + 10k).
+        if (topicId == null && uid != null) {
+            return findEventsMergedInMemory(
+                userId = uid,
+                msgTypes = msgTypes,
+                fromTs = fromTs,
+                toTs = toTs,
+                status = status,
+                cursorTs = cursorTs,
+                cursorLogId = cursorLogId,
+                effectiveLimit = effectiveLimit,
+            )
+        }
+
+        val branchLimit = minOf(1000, maxOf(effectiveLimit + 1, 48))
 
         val clientRows =
             if (topicId == null) {
-                queryClientReqLog(userId ?: actorUserId, msgTypes, fromTs, toTs, cursorTs, effectiveLimit + 1)
+                queryClientReqLog(
+                    uid,
+                    msgTypes,
+                    fromTs,
+                    toTs,
+                    cursorTs,
+                    cursorLogId,
+                    branchLimit,
+                )
             } else {
                 emptyList()
             }
 
         val messageRows =
             if (msgTypes == null || msgTypes.any { it in listOf("PUB", "EDIT", "DEL", "HDEL") }) {
-                queryMessageLog(userId ?: actorUserId, topicId, msgTypes, fromTs, toTs, cursorTs, effectiveLimit + 1)
+                queryMessageLog(
+                    uid,
+                    topicId,
+                    msgTypes,
+                    fromTs,
+                    toTs,
+                    cursorTs,
+                    cursorLogId,
+                    branchLimit,
+                )
             } else {
                 emptyList()
             }
 
         val combined =
             (clientRows + messageRows)
-                .sortedByDescending { it.timestamp }
+                .filter { ev -> status?.let { s -> ev.status == s } ?: true }
+                .sortedWith(AuditEventSort.DESC)
+                .distinctBy { it.eventId }
                 .take(effectiveLimit + 1)
 
         val hasMore = combined.size > effectiveLimit
         val page = if (hasMore) combined.dropLast(1) else combined
         val nextCursor =
             if (hasMore && page.isNotEmpty()) {
-                val last = page.last()
-                CursorCodec.encode(last.timestamp, last.eventId)
+                CursorCodec.encode(page.last().timestamp, page.last().eventId)
             } else {
                 null
             }
 
+        return CursorPage(data = page, nextCursor = nextCursor, hasMore = hasMore)
+    }
+
+    private fun decodeCursor(cursor: String?): Pair<Long?, String?> =
+        if (cursor != null) {
+            val (ts, id) = CursorCodec.decode(cursor)
+            try {
+                UUID.fromString(id)
+            } catch (_: IllegalArgumentException) {
+                throw IllegalArgumentException("Invalid cursor log id")
+            }
+            ts to id
+        } else {
+            null to null
+        }
+
+    private fun findEventsMergedInMemory(
+        userId: String,
+        msgTypes: List<String>?,
+        fromTs: Long?,
+        toTs: Long?,
+        status: String?,
+        cursorTs: Long?,
+        cursorLogId: String?,
+        effectiveLimit: Int,
+    ): CursorPage<AuditEvent> {
+        val cap = 10_000
+        val clientRows =
+            queryClientReqLog(userId, msgTypes, fromTs, toTs, null, null, cap)
+        val messageRows =
+            if (msgTypes == null || msgTypes.any { it in listOf("PUB", "EDIT", "DEL", "HDEL") }) {
+                queryMessageLog(userId, null, msgTypes, fromTs, toTs, null, null, cap)
+            } else {
+                emptyList()
+            }
+
+        val sorted =
+            (clientRows + messageRows)
+                .filter { ev -> status?.let { s -> ev.status == s } ?: true }
+                .sortedWith(AuditEventSort.DESC)
+                .distinctBy { it.eventId }
+
+        val pageStart =
+            if (cursorTs == null || cursorLogId == null) {
+                0
+            } else {
+                val cu = UUID.fromString(cursorLogId)
+                val idx =
+                    sorted.indexOfFirst { ev ->
+                        val eu = UUID.fromString(ev.eventId)
+                        ev.timestamp < cursorTs || (ev.timestamp == cursorTs && eu < cu)
+                    }
+                if (idx == -1) sorted.size else idx
+            }
+
+        val window = sorted.drop(pageStart).take(effectiveLimit + 1)
+        val hasMore = window.size > effectiveLimit
+        val page = if (hasMore) window.dropLast(1) else window
+        val nextCursor =
+            if (hasMore && page.isNotEmpty()) {
+                CursorCodec.encode(page.last().timestamp, page.last().eventId)
+            } else {
+                null
+            }
         return CursorPage(data = page, nextCursor = nextCursor, hasMore = hasMore)
     }
 
@@ -67,6 +175,7 @@ class AuditRepository(
         fromTs: Long?,
         toTs: Long?,
         cursorTs: Long?,
+        cursorLogId: String?,
         limit: Int,
     ): List<AuditEvent> {
         val conditions =
@@ -74,7 +183,9 @@ class AuditRepository(
                 if (userId != null) add("sess_user_id = :userId")
                 if (fromTs != null) add("log_timestamp >= fromUnixTimestamp64Milli(:fromTs)")
                 if (toTs != null) add("log_timestamp <= fromUnixTimestamp64Milli(:toTs)")
-                if (cursorTs != null) add("log_timestamp < fromUnixTimestamp64Milli(:cursorTs)")
+                if (cursorTs != null && cursorLogId != null) {
+                    add("(log_timestamp, log_id) < (fromUnixTimestamp64Milli(:cursorTs), toUUID(:cursorLogId))")
+                }
                 if (msgTypes != null) add("msg_type IN (:msgTypes)")
             }.let { if (it.isEmpty()) "1=1" else it.joinToString(" AND ") }
 
@@ -84,6 +195,7 @@ class AuditRepository(
                 addValue("fromTs", fromTs)
                 addValue("toTs", toTs)
                 addValue("cursorTs", cursorTs)
+                addValue("cursorLogId", cursorLogId)
                 addValue("limit", limit)
                 if (msgTypes != null) addValue("msgTypes", msgTypes)
             }
@@ -101,14 +213,19 @@ class AuditRepository(
                 sess_remote_addr                                           AS ip,
                 sess_user_agent                                            AS user_agent,
                 sess_device_id                                             AS device_id,
-                sess_session_id
+                sess_session_id,
+                sub_topic,
+                get_what,
+                set_topic,
+                del_what,
+                del_user_id
             FROM audit.client_req_log
             WHERE $conditions
-            ORDER BY log_timestamp DESC
+            ORDER BY log_timestamp DESC, log_id DESC
             LIMIT :limit
             """.trimIndent(),
             params,
-        ) { rs, _ -> mapRowToAuditEvent(rs) }
+        ) { rs, _ -> AuditEventMapping.mapAuditEventFromResultSet(rs) }
     }
 
     private fun queryMessageLog(
@@ -118,9 +235,9 @@ class AuditRepository(
         fromTs: Long?,
         toTs: Long?,
         cursorTs: Long?,
+        cursorLogId: String?,
         limit: Int,
     ): List<AuditEvent> {
-        // Конвертируем msg_type (PUB/EDIT/DEL/HDEL) → action (CREATE/UPDATE/DELETE)
         val actionValues =
             msgTypes
                 ?.mapNotNull {
@@ -138,7 +255,9 @@ class AuditRepository(
                 if (topicId != null) add("msg_topic = :topicId")
                 if (fromTs != null) add("log_timestamp >= fromUnixTimestamp64Milli(:fromTs)")
                 if (toTs != null) add("log_timestamp <= fromUnixTimestamp64Milli(:toTs)")
-                if (cursorTs != null) add("log_timestamp < fromUnixTimestamp64Milli(:cursorTs)")
+                if (cursorTs != null && cursorLogId != null) {
+                    add("(log_timestamp, log_id) < (fromUnixTimestamp64Milli(:cursorTs), toUUID(:cursorLogId))")
+                }
                 if (actionValues != null) add("toString(action) IN (:actionValues)")
             }.let { if (it.isEmpty()) "1=1" else it.joinToString(" AND ") }
 
@@ -149,6 +268,7 @@ class AuditRepository(
                 addValue("fromTs", fromTs)
                 addValue("toTs", toTs)
                 addValue("cursorTs", cursorTs)
+                addValue("cursorLogId", cursorLogId)
                 addValue("limit", limit)
                 if (actionValues != null) addValue("actionValues", actionValues)
             }
@@ -170,14 +290,19 @@ class AuditRepository(
                 ''                                     AS ip,
                 ''                                     AS user_agent,
                 ''                                     AS device_id,
-                ''                                     AS sess_session_id
+                ''                                     AS sess_session_id,
+                NULL                                   AS sub_topic,
+                NULL                                   AS get_what,
+                NULL                                   AS set_topic,
+                NULL                                   AS del_what,
+                NULL                                   AS del_user_id
             FROM audit.message_log
             WHERE $conditions
-            ORDER BY log_timestamp DESC
+            ORDER BY log_timestamp DESC, log_id DESC
             LIMIT :limit
             """.trimIndent(),
             params,
-        ) { rs, _ -> mapRowToAuditEvent(rs) }
+        ) { rs, _ -> AuditEventMapping.mapAuditEventFromResultSet(rs) }
     }
 
     fun findEventById(eventId: String): AuditEvent? {
@@ -196,13 +321,18 @@ class AuditRepository(
                         sess_remote_addr                                       AS ip,
                         sess_user_agent                                        AS user_agent,
                         sess_device_id                                         AS device_id,
-                        sess_session_id
+                                sess_session_id,
+                                sub_topic,
+                                get_what,
+                                set_topic,
+                                del_what,
+                                del_user_id
                     FROM audit.client_req_log
                     WHERE log_id = toUUID(:eventId)
                     LIMIT 1
                     """.trimIndent(),
                     MapSqlParameterSource("eventId", eventId),
-                ) { rs, _ -> mapRowToAuditEvent(rs) }
+                ) { rs, _ -> AuditEventMapping.mapAuditEventFromResultSet(rs) }
             }.getOrElse { emptyList() }
 
         if (fromClient.isNotEmpty()) return fromClient.first()
@@ -225,13 +355,18 @@ class AuditRepository(
                     ''                                     AS ip,
                     ''                                     AS user_agent,
                     ''                                     AS device_id,
-                    ''                                     AS sess_session_id
+                    ''                                     AS sess_session_id,
+                    NULL                                   AS sub_topic,
+                    NULL                                   AS get_what,
+                    NULL                                   AS set_topic,
+                    NULL                                   AS del_what,
+                    NULL                                   AS del_user_id
                 FROM audit.message_log
                 WHERE toString(log_id) = :eventId
                 LIMIT 1
                 """.trimIndent(),
                 MapSqlParameterSource("eventId", eventId),
-            ) { rs, _ -> mapRowToAuditEvent(rs) }
+            ) { rs, _ -> AuditEventMapping.mapAuditEventFromResultSet(rs) }
             .firstOrNull()
     }
 
@@ -242,7 +377,7 @@ class AuditRepository(
         cursor: String? = null,
         limit: Int = 100,
     ): CursorPage<AuditEvent> {
-        val (cursorTs, _) = if (cursor != null) CursorCodec.decode(cursor) else null to null
+        val (cursorTs, cursorLogId) = decodeCursor(cursor)
         val effectiveLimit = limit.coerceIn(1, 1000)
 
         val conditions =
@@ -251,7 +386,9 @@ class AuditRepository(
                 if (userId != null) add("sess_user_id = :userId")
                 if (fromTs != null) add("log_timestamp >= fromUnixTimestamp64Milli(:fromTs)")
                 if (toTs != null) add("log_timestamp <= fromUnixTimestamp64Milli(:toTs)")
-                if (cursorTs != null) add("log_timestamp < fromUnixTimestamp64Milli(:cursorTs)")
+                if (cursorTs != null && cursorLogId != null) {
+                    add("(log_timestamp, log_id) < (fromUnixTimestamp64Milli(:cursorTs), toUUID(:cursorLogId))")
+                }
             }
 
         val params =
@@ -260,6 +397,7 @@ class AuditRepository(
                 addValue("fromTs", fromTs)
                 addValue("toTs", toTs)
                 addValue("cursorTs", cursorTs)
+                addValue("cursorLogId", cursorLogId)
                 addValue("limit", effectiveLimit + 1)
             }
 
@@ -277,14 +415,19 @@ class AuditRepository(
                     sess_remote_addr                                       AS ip,
                     sess_user_agent                                        AS user_agent,
                     sess_device_id                                         AS device_id,
-                    sess_session_id
+                          sess_session_id,
+                          sub_topic,
+                          get_what,
+                          set_topic,
+                          del_what,
+                          del_user_id
                 FROM audit.client_req_log
                 WHERE ${conditions.joinToString(" AND ")}
-                ORDER BY log_timestamp DESC
+                ORDER BY log_timestamp DESC, log_id DESC
                 LIMIT :limit
                 """.trimIndent(),
                 params,
-            ) { rs, _ -> mapRowToAuditEvent(rs) }
+            ) { rs, _ -> AuditEventMapping.mapAuditEventFromResultSet(rs) }
 
         val hasMore = rows.size > effectiveLimit
         val page = if (hasMore) rows.dropLast(1) else rows
@@ -296,70 +439,5 @@ class AuditRepository(
             }
 
         return CursorPage(data = page, nextCursor = nextCursor, hasMore = hasMore)
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    private fun mapRowToAuditEvent(rs: ResultSet): AuditEvent {
-        val msgType = rs.getString("msg_type") ?: ""
-        val userId = rs.getString("user_id")?.takeIf { it.isNotBlank() }
-        return AuditEvent(
-            eventId = rs.getString("event_id"),
-            eventType = mapMsgTypeToEventType(msgType),
-            timestamp = rs.getLong("timestamp"),
-            userId = userId,
-            actorUserId = userId,
-            topicId = rs.getString("topic_id")?.takeIf { it.isNotBlank() },
-            status = rs.getString("status"),
-            metadata =
-                buildMap {
-                    if (msgType.isNotBlank()) put("msg_type", msgType)
-                    rs
-                        .getString("sess_session_id")
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { put("session_id", it) }
-                },
-            ip = rs.getString("ip")?.takeIf { it.isNotBlank() },
-            userAgent = rs.getString("user_agent")?.takeIf { it.isNotBlank() },
-            deviceId = rs.getString("device_id")?.takeIf { it.isNotBlank() },
-        )
-    }
-
-    companion object {
-        fun mapMsgTypeToEventType(msgType: String): String =
-            when (msgType.uppercase()) {
-                "LOGIN" -> "auth.login"
-                "HI" -> "auth.session_start"
-                "BYE" -> "auth.logout"
-                "REG" -> "auth.register"
-                "PUB" -> "message.create"
-                "EDIT" -> "message.edit"
-                "DEL" -> "message.delete"
-                "HDEL" -> "message.hard_delete"
-                "CREATE" -> "topic.create"
-                "DELETE" -> "topic.delete"
-                "JOIN" -> "subscription.join"
-                "LEAVE" -> "subscription.leave"
-                "ROLE" -> "subscription.role_change"
-                else -> "unknown.$msgType"
-            }
-
-        fun mapEventTypeToMsgTypes(eventType: String): List<String>? =
-            when (eventType) {
-                "auth.login" -> listOf("LOGIN")
-                "auth.session_start" -> listOf("HI")
-                "auth.logout" -> listOf("BYE")
-                "auth.register" -> listOf("REG")
-                "message.create" -> listOf("PUB")
-                "message.edit" -> listOf("EDIT")
-                "message.delete" -> listOf("DEL")
-                "message.hard_delete" -> listOf("HDEL")
-                "topic.create" -> listOf("CREATE")
-                "topic.delete" -> listOf("DELETE")
-                "subscription.join" -> listOf("JOIN")
-                "subscription.leave" -> listOf("LEAVE")
-                "subscription.role_change" -> listOf("ROLE")
-                else -> null
-            }
     }
 }

@@ -4,6 +4,7 @@ import com.echomessenger.audit.domain.*
 import com.echomessenger.audit.repository.ExportRepository
 import com.echomessenger.audit.repository.MessageRepository
 import com.echomessenger.audit.service.ExportService
+import com.echomessenger.audit.service.UserNameResolver
 import io.mockk.*
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
@@ -13,6 +14,7 @@ import java.io.File
 class ExportServiceTest {
     private val exportRepository: ExportRepository = mockk(relaxed = true)
     private val messageRepository: MessageRepository = mockk(relaxed = true)
+    private val userNameResolver: UserNameResolver = mockk(relaxed = true)
 
     // Используем системный temp — не @TempDir, который JUnit удаляет до завершения coroutine
     private val tempDir =
@@ -23,6 +25,7 @@ class ExportServiceTest {
         ExportService(
             exportRepository = exportRepository,
             messageRepository = messageRepository,
+            userNameResolver = userNameResolver,
             storageType = "pvc",
             pvcPath = tempDir.absolutePath,
         )

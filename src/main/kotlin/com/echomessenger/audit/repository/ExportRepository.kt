@@ -14,15 +14,16 @@ class ExportRepository(
     private val jdbc: NamedParameterJdbcTemplate,
 ) {
     fun save(job: ExportJob) {
+        val rowVersion = nextRowVersion(job.exportId)
         jdbc.update(
             """
             INSERT INTO audit.export_job_log
-                (export_id, status, format, created_at, completed_at, download_url, error_message, file_size_bytes)
+                (export_id, status, format, created_at, completed_at, download_url, error_message, file_size_bytes, row_version)
             VALUES
-                (:exportId, :status, :format,
+                (toUUID(:exportId), :status, :format,
                  fromUnixTimestamp64Milli(:createdAt),
-                 ${if (job.completedAt != null) "fromUnixTimestamp64Milli(:completedAt)" else "NULL"},
-                 :downloadUrl, :errorMessage, :fileSizeBytes)
+                 ${if (job.completedAt != null) "fromUnixTimestamp64Milli(:completedAt)" else "toDateTime64(0, 3)"},
+                 :downloadUrl, :errorMessage, :fileSizeBytes, :rowVersion)
             """.trimIndent(),
             MapSqlParameterSource().apply {
                 addValue("exportId", job.exportId)
@@ -33,6 +34,7 @@ class ExportRepository(
                 addValue("downloadUrl", job.downloadUrl)
                 addValue("errorMessage", job.errorMessage)
                 addValue("fileSizeBytes", job.fileSizeBytes)
+                addValue("rowVersion", rowVersion)
             },
         )
     }
@@ -49,6 +51,7 @@ class ExportRepository(
                            download_url, error_message, file_size_bytes
                     FROM audit.export_job_log
                     WHERE export_id = toUUID(:exportId)
+                    ORDER BY row_version DESC
                     LIMIT 1
                     """.trimIndent(),
                     MapSqlParameterSource("exportId", exportId),
@@ -65,6 +68,20 @@ class ExportRepository(
                     )
                 }.firstOrNull()
         }.getOrNull()
+    }
+
+    private fun nextRowVersion(exportId: String): Long {
+        val current =
+            jdbc.queryForObject(
+                """
+                SELECT coalesce(max(row_version), 0)
+                FROM audit.export_job_log
+                WHERE export_id = toUUID(:exportId)
+                """.trimIndent(),
+                MapSqlParameterSource("exportId", exportId),
+                Long::class.java,
+            ) ?: 0L
+        return maxOf(current + 1, System.currentTimeMillis())
     }
 
     private fun isValidUuid(value: String): Boolean = runCatching { java.util.UUID.fromString(value) }.isSuccess

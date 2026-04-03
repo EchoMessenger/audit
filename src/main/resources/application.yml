@@ -64,6 +64,13 @@ audit:
     s3:
       bucket: ${EXPORT_S3_BUCKET:audit-exports}
       region: ${EXPORT_S3_REGION:us-east-1}
+      endpoint: ${EXPORT_S3_ENDPOINT:}
+      public-endpoint: ${EXPORT_S3_PUBLIC_ENDPOINT:}
+      access-key: ${EXPORT_S3_ACCESS_KEY:}
+      secret-key: ${EXPORT_S3_SECRET_KEY:}
+      path-style-access: ${EXPORT_S3_PATH_STYLE_ACCESS:false}
+      key-prefix: ${EXPORT_S3_KEY_PREFIX:audit/exports}
+      presign-expiry-seconds: ${EXPORT_S3_PRESIGN_EXPIRY_SECONDS:900}
   rate-limit:
     reports-per-minute: 5
     export-per-minute: 2

@@ -4,12 +4,25 @@ import com.echomessenger.audit.domain.*
 import com.echomessenger.audit.repository.ExportRepository
 import com.echomessenger.audit.repository.MessageRepository
 import com.echomessenger.audit.service.ExportService
+import com.echomessenger.audit.service.UserNameResolver
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
+import org.testcontainers.containers.GenericContainer
+import org.testcontainers.containers.wait.strategy.Wait
+import org.testcontainers.utility.DockerImageName
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.S3Configuration
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest
+import software.amazon.awssdk.services.s3.model.GetObjectRequest
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest
+import software.amazon.awssdk.services.s3.presigner.S3Presigner
 import java.nio.file.Path
 import java.time.Instant
 import java.time.ZoneOffset
@@ -26,12 +39,14 @@ class ExportServiceIT : IntegrationTestBase() {
     @Autowired private lateinit var exportRepository: ExportRepository
     @Autowired private lateinit var messageRepository: MessageRepository
     @Autowired private lateinit var jdbc: NamedParameterJdbcTemplate
+    private val userNameResolver: UserNameResolver = io.mockk.mockk(relaxed = true)
 
     @TempDir lateinit var tempDir: Path
 
     private fun service() = ExportService(
         exportRepository = exportRepository,
         messageRepository = messageRepository,
+        userNameResolver = userNameResolver,
         storageType = "pvc",
         pvcPath = tempDir.toString(),
     )
@@ -136,6 +151,115 @@ class ExportServiceIT : IntegrationTestBase() {
         val found = service().getJob(job.exportId)
         assertNotNull(found)
         assertEquals(job.exportId, found!!.exportId)
+    }
+
+    @Test
+    fun `S3 export uploads object to MinIO and generates presigned URL`() {
+        val minio =
+            GenericContainer(DockerImageName.parse("minio/minio:latest"))
+                .withExposedPorts(9000)
+                .withEnv("MINIO_ROOT_USER", "minioadmin")
+                .withEnv("MINIO_ROOT_PASSWORD", "minioadmin")
+                .withCommand("server", "/data")
+                .waitingFor(Wait.forHttp("/minio/health/ready").forStatusCode(200))
+
+        minio.start()
+        try {
+            val endpoint = "http://${minio.host}:${minio.getMappedPort(9000)}"
+            val bucket = "audit-exports-test"
+            val keyPrefix = "it/exports"
+            val credentialsProvider =
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create("minioadmin", "minioadmin"),
+                )
+
+            val s3Client =
+                S3Client.builder()
+                    .endpointOverride(java.net.URI.create(endpoint))
+                    .region(Region.US_EAST_1)
+                    .credentialsProvider(credentialsProvider)
+                    .serviceConfiguration(
+                        S3Configuration.builder()
+                            .pathStyleAccessEnabled(true)
+                            .build(),
+                    ).build()
+
+            val s3Presigner =
+                S3Presigner.builder()
+                    .endpointOverride(java.net.URI.create(endpoint))
+                    .region(Region.US_EAST_1)
+                    .credentialsProvider(credentialsProvider)
+                    .build()
+
+            s3Client.createBucket(CreateBucketRequest.builder().bucket(bucket).build())
+
+            val s3Service =
+                ExportService(
+                    exportRepository = exportRepository,
+                    messageRepository = messageRepository,
+                    userNameResolver = userNameResolver,
+                    storageType = "s3",
+                    pvcPath = tempDir.toString(),
+                    s3Bucket = bucket,
+                    s3KeyPrefix = keyPrefix,
+                    s3PresignExpirySeconds = 300,
+                    s3Client = s3Client,
+                    s3Presigner = s3Presigner,
+                )
+
+            val userId = "exp_s3_${UUID.randomUUID().toString().take(8)}"
+            seedMessages(userId)
+
+            val job =
+                s3Service.startExport(
+                    ExportRequest(
+                        filters =
+                            ExportFilters(
+                                userId = userId,
+                                fromTs = System.currentTimeMillis() - 3_600_000,
+                                toTs = System.currentTimeMillis(),
+                            ),
+                        format = ExportFormat.csv,
+                    ),
+                )
+
+            val completed = awaitTerminalStatus(job.exportId)
+            assertEquals(ExportStatus.completed, completed.status, "error: ${completed.errorMessage}")
+            assertTrue((completed.fileSizeBytes ?: 0) > 0)
+
+            val objectKey = "$keyPrefix/${job.exportId}.csv"
+            s3Client.headObject(
+                HeadObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(objectKey)
+                    .build(),
+            )
+
+            val objectBody =
+                s3Client
+                    .getObjectAsBytes(
+                        GetObjectRequest.builder().bucket(bucket).key(objectKey).build(),
+                    ).asUtf8String()
+            assertTrue(objectBody.startsWith("message_id,"))
+
+            val presignedUrl = s3Service.generatePresignedDownloadUrl(job.exportId, ExportFormat.csv)
+            assertTrue(presignedUrl.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"))
+            assertTrue(presignedUrl.contains(job.exportId))
+        } finally {
+            minio.stop()
+        }
+    }
+
+    private fun awaitTerminalStatus(exportId: String): ExportJob {
+        repeat(40) {
+            val current = exportRepository.findById(exportId)
+            if (current != null && (current.status == ExportStatus.completed || current.status == ExportStatus.failed)) {
+                return current
+            }
+            Thread.sleep(250)
+        }
+
+        return exportRepository.findById(exportId) ?: error("Export job was not found: $exportId")
     }
 
     private fun seedMessages(userId: String) {
