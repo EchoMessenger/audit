@@ -316,6 +316,29 @@ class MessageRepositoryIT : IntegrationTestBase() {
                     .addValue("content", r.content),
             )
         }
+
+        data class AccountRow(
+            val offsetSec: Long,
+            val action: String,
+            val publicValue: String,
+        )
+
+        listOf(
+            AccountRow(12_000, "CREATE", "Alice v1"),
+            AccountRow(600, "UPDATE", "Alice v2"),
+        ).forEach { r ->
+            jdbc.update(
+                """INSERT INTO audit.account_log
+                   (log_timestamp, action, user_id, public)
+                   VALUES (:ts, :act, :uid, :public)""",
+                MapSqlParameterSource()
+                    .addValue("ts", chTs(instant.minusSeconds(r.offsetSec)))
+                    .addValue("act", r.action)
+                    .addValue("uid", userId)
+                    .addValue("public", r.publicValue),
+            )
+        }
+
         Thread.sleep(800)
     }
 
@@ -384,6 +407,24 @@ class MessageRepositoryIT : IntegrationTestBase() {
         }
         assertEquals(3, collected.size, "Expected 3 messages for $userId")
         assertEquals(collected.size, collected.toSet().size, "No duplicates")
+    }
+
+    @Test
+    fun `streamMessages resolves user_name from latest account_log public`() {
+        val req = MessageReportRequest(
+            users = listOf(userId),
+            fromTs = seedTime - 4 * 3600_000,
+            toTs = seedTime + 60_000,
+            includeDeleted = true,
+        )
+
+        val collected = mutableListOf<com.echomessenger.audit.domain.MessageReportItem>()
+        messageRepository.streamMessages(req, batchSize = 2) { batch ->
+            collected.addAll(batch)
+        }
+
+        assertTrue(collected.isNotEmpty(), "Expected non-empty stream result")
+        assertTrue(collected.all { it.userName == "Alice v2" }, "Expected latest account public name")
     }
 
     @Test

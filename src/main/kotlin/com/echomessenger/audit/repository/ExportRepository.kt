@@ -7,36 +7,42 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.stereotype.Repository
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 @Repository
 class ExportRepository(
     @Qualifier("clickHouseJdbcTemplate")
     private val jdbc: NamedParameterJdbcTemplate,
 ) {
+    private val versionLocks = Array(64) { ReentrantLock() }
+
     fun save(job: ExportJob) {
-        val rowVersion = nextRowVersion(job.exportId)
-        jdbc.update(
-            """
-            INSERT INTO audit.export_job_log
-                (export_id, status, format, created_at, completed_at, download_url, error_message, file_size_bytes, row_version)
-            VALUES
-                (toUUID(:exportId), :status, :format,
-                 fromUnixTimestamp64Milli(:createdAt),
-                 ${if (job.completedAt != null) "fromUnixTimestamp64Milli(:completedAt)" else "toDateTime64(0, 3)"},
-                 :downloadUrl, :errorMessage, :fileSizeBytes, :rowVersion)
-            """.trimIndent(),
-            MapSqlParameterSource().apply {
-                addValue("exportId", job.exportId)
-                addValue("status", job.status.name)
-                addValue("format", job.format.name)
-                addValue("createdAt", job.createdAt)
-                addValue("completedAt", job.completedAt)
-                addValue("downloadUrl", job.downloadUrl)
-                addValue("errorMessage", job.errorMessage)
-                addValue("fileSizeBytes", job.fileSizeBytes)
-                addValue("rowVersion", rowVersion)
-            },
-        )
+        withVersionLock(job.exportId) {
+            val rowVersion = nextRowVersion(job.exportId)
+            jdbc.update(
+                """
+                INSERT INTO audit.export_job_log
+                    (export_id, status, format, created_at, completed_at, download_url, error_message, file_size_bytes, row_version)
+                VALUES
+                    (toUUID(:exportId), :status, :format,
+                     fromUnixTimestamp64Milli(:createdAt),
+                     ${if (job.completedAt != null) "fromUnixTimestamp64Milli(:completedAt)" else "toDateTime64(0, 3)"},
+                     :downloadUrl, :errorMessage, :fileSizeBytes, :rowVersion)
+                """.trimIndent(),
+                MapSqlParameterSource().apply {
+                    addValue("exportId", job.exportId)
+                    addValue("status", job.status.name)
+                    addValue("format", job.format.name)
+                    addValue("createdAt", job.createdAt)
+                    addValue("completedAt", job.completedAt)
+                    addValue("downloadUrl", job.downloadUrl)
+                    addValue("errorMessage", job.errorMessage)
+                    addValue("fileSizeBytes", job.fileSizeBytes)
+                    addValue("rowVersion", rowVersion)
+                },
+            )
+        }
     }
 
     fun findById(exportId: String): ExportJob? {
@@ -82,6 +88,14 @@ class ExportRepository(
                 Long::class.java,
             ) ?: 0L
         return maxOf(current + 1, System.currentTimeMillis())
+    }
+
+    private fun <T> withVersionLock(
+        exportId: String,
+        action: () -> T,
+    ): T {
+        val lock = versionLocks[Math.floorMod(exportId.hashCode(), versionLocks.size)]
+        return lock.withLock(action)
     }
 
     private fun isValidUuid(value: String): Boolean = runCatching { java.util.UUID.fromString(value) }.isSuccess

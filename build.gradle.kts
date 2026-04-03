@@ -58,6 +58,7 @@ dependencies {
     // Object storage (S3 / MinIO)
     implementation(platform("software.amazon.awssdk:bom:2.32.18"))
     implementation("software.amazon.awssdk:s3")
+    implementation("software.amazon.awssdk:apache-client")
 
     // Testing
     testImplementation("org.springframework.boot:spring-boot-starter-test")

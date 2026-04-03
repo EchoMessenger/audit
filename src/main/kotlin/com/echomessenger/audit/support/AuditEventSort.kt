@@ -8,8 +8,27 @@ import java.util.UUID
  */
 object AuditEventSort {
     val DESC: Comparator<AuditEvent> =
-        compareByDescending<AuditEvent> { it.timestamp }
-            .thenByDescending { uuidFromEventId(it.eventId) }
+        Comparator { left, right ->
+            val byTimestamp = right.timestamp.compareTo(left.timestamp)
+            if (byTimestamp != 0) {
+                byTimestamp
+            } else {
+                compareEventIdsDesc(left.eventId, right.eventId)
+            }
+        }
 
-    private fun uuidFromEventId(raw: String): UUID = UUID.fromString(raw)
+    private fun compareEventIdsDesc(
+        leftRaw: String,
+        rightRaw: String,
+    ): Int {
+        val leftUuid = safeUuid(leftRaw)
+        val rightUuid = safeUuid(rightRaw)
+
+        return when {
+            leftUuid != null && rightUuid != null -> rightUuid.compareTo(leftUuid)
+            else -> rightRaw.compareTo(leftRaw)
+        }
+    }
+
+    private fun safeUuid(raw: String): UUID? = runCatching { UUID.fromString(raw) }.getOrNull()
 }

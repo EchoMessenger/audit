@@ -19,6 +19,7 @@ data class ErrorResponse(
 @RestControllerAdvice
 class GlobalExceptionHandler {
     private val log = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)
+    private val forbiddenPublicMessage = "Insufficient permissions"
 
     @ExceptionHandler(IllegalArgumentException::class)
     fun handleIllegalArgument(e: IllegalArgumentException): ResponseEntity<ErrorResponse> =
@@ -45,16 +46,18 @@ class GlobalExceptionHandler {
             )
 
     @ExceptionHandler(AccessDeniedException::class)
-    fun handleForbidden(e: AccessDeniedException): ResponseEntity<ErrorResponse> =
-        ResponseEntity
+    fun handleForbidden(e: AccessDeniedException): ResponseEntity<ErrorResponse> {
+        log.warn("Access denied: {}", e.message, e)
+        return ResponseEntity
             .status(HttpStatus.FORBIDDEN)
             .body(
                 ErrorResponse(
                     error = "FORBIDDEN",
-                    message = e.message ?: "Insufficient permissions",
+                    message = forbiddenPublicMessage,
                     status = 403,
                 ),
             )
+    }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException::class)
     fun handleTypeMismatch(e: MethodArgumentTypeMismatchException): ResponseEntity<ErrorResponse> =

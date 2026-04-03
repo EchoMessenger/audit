@@ -128,12 +128,12 @@ class AuditRepository(
         cursorLogId: String?,
         effectiveLimit: Int,
     ): CursorPage<AuditEvent> {
-        val cap = 10_000
+        val cap = minOf(10_000, maxOf(effectiveLimit * 4, effectiveLimit + 1, 256))
         val clientRows =
-            queryClientReqLog(userId, msgTypes, fromTs, toTs, null, null, cap)
+            queryClientReqLog(userId, msgTypes, fromTs, toTs, cursorTs, cursorLogId, cap)
         val messageRows =
             if (msgTypes == null || msgTypes.any { it in listOf("PUB", "EDIT", "DEL", "HDEL") }) {
-                queryMessageLog(userId, null, msgTypes, fromTs, toTs, null, null, cap)
+                queryMessageLog(userId, null, msgTypes, fromTs, toTs, cursorTs, cursorLogId, cap)
             } else {
                 emptyList()
             }
@@ -148,11 +148,10 @@ class AuditRepository(
             if (cursorTs == null || cursorLogId == null) {
                 0
             } else {
-                val cu = UUID.fromString(cursorLogId)
                 val idx =
                     sorted.indexOfFirst { ev ->
-                        val eu = UUID.fromString(ev.eventId)
-                        ev.timestamp < cursorTs || (ev.timestamp == cursorTs && eu < cu)
+                        ev.timestamp < cursorTs ||
+                            (ev.timestamp == cursorTs && compareEventIdForSeek(ev.eventId, cursorLogId) < 0)
                     }
                 if (idx == -1) sorted.size else idx
             }
@@ -168,6 +167,30 @@ class AuditRepository(
             }
         return CursorPage(data = page, nextCursor = nextCursor, hasMore = hasMore)
     }
+
+    private fun compareEventIdForSeek(
+        leftRaw: String,
+        rightRaw: String,
+    ): Int {
+        val leftUuid = safeUuid(leftRaw)
+        val rightUuid = safeUuid(rightRaw)
+
+        return when {
+            leftUuid != null && rightUuid != null -> compareUuidLsbFirst(leftUuid, rightUuid)
+            else -> leftRaw.compareTo(rightRaw)
+        }
+    }
+
+    private fun compareUuidLsbFirst(
+        left: UUID,
+        right: UUID,
+    ): Int {
+        val lsb = java.lang.Long.compare(left.leastSignificantBits, right.leastSignificantBits)
+        if (lsb != 0) return lsb
+        return java.lang.Long.compare(left.mostSignificantBits, right.mostSignificantBits)
+    }
+
+    private fun safeUuid(raw: String): UUID? = runCatching { UUID.fromString(raw) }.getOrNull()
 
     private fun queryClientReqLog(
         userId: String?,

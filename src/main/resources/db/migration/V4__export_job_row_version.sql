@@ -19,13 +19,55 @@ SETTINGS index_granularity = 8192;
 INSERT INTO audit.export_job_log_new
 SELECT
     export_id,
-    argMax(status, (toUnixTimestamp64Milli(completed_at), toUnixTimestamp64Milli(created_at))) AS status,
-    argMax(format, (toUnixTimestamp64Milli(completed_at), toUnixTimestamp64Milli(created_at))) AS format,
+    argMax(
+        status,
+        (
+            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            toUnixTimestamp64Milli(completed_at),
+            toUnixTimestamp64Milli(created_at)
+        )
+    ) AS status,
+    argMax(
+        format,
+        (
+            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            toUnixTimestamp64Milli(completed_at),
+            toUnixTimestamp64Milli(created_at)
+        )
+    ) AS format,
     min(created_at) AS created_at,
-    argMax(completed_at, (toUnixTimestamp64Milli(completed_at), toUnixTimestamp64Milli(created_at))) AS completed_at,
-    argMax(download_url, (toUnixTimestamp64Milli(completed_at), toUnixTimestamp64Milli(created_at))) AS download_url,
-    argMax(error_message, (toUnixTimestamp64Milli(completed_at), toUnixTimestamp64Milli(created_at))) AS error_message,
-    argMax(file_size_bytes, (toUnixTimestamp64Milli(completed_at), toUnixTimestamp64Milli(created_at))) AS file_size_bytes,
+    argMax(
+        completed_at,
+        (
+            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            toUnixTimestamp64Milli(completed_at),
+            toUnixTimestamp64Milli(created_at)
+        )
+    ) AS completed_at,
+    argMax(
+        download_url,
+        (
+            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            toUnixTimestamp64Milli(completed_at),
+            toUnixTimestamp64Milli(created_at)
+        )
+    ) AS download_url,
+    argMax(
+        error_message,
+        (
+            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            toUnixTimestamp64Milli(completed_at),
+            toUnixTimestamp64Milli(created_at)
+        )
+    ) AS error_message,
+    argMax(
+        file_size_bytes,
+        (
+            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            toUnixTimestamp64Milli(completed_at),
+            toUnixTimestamp64Milli(created_at)
+        )
+    ) AS file_size_bytes,
     toUInt64(toUnixTimestamp64Milli(now64(3))) AS row_version
 FROM audit.export_job_log
 GROUP BY export_id;

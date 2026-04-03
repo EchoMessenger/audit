@@ -91,8 +91,8 @@ class ExportService(
 
             BufferedWriter(FileWriter(outputFile)).use { writer ->
                 when (job.format) {
-                    ExportFormat.csv -> exportCsv(writer, messageReportReq)
-                    ExportFormat.json -> exportJson(writer, messageReportReq)
+                    ExportFormat.csv -> exportCsv(writer, messageReportReq, job.exportId)
+                    ExportFormat.json -> exportJson(writer, messageReportReq, job.exportId)
                 }
             }
 
@@ -182,13 +182,39 @@ class ExportService(
     private fun exportCsv(
         writer: BufferedWriter,
         req: MessageReportRequest,
+        exportId: String,
     ) {
         // Header
         writer.write("message_id,topic_id,user_id,user_name,timestamp,content,is_deleted")
         writer.newLine()
 
+        var batches = 0
+        var totalMessages = 0
+        var repositoryResolved = 0
+        var resolverRecovered = 0
+        var unresolvedAfterResolver = 0
+
         messageRepository.streamMessages(req, batchSize = 1000) { batch ->
+            batches += 1
+            totalMessages += batch.size
+            repositoryResolved += batch.count { !it.userName.isNullOrBlank() }
+            val missingBeforeResolver = batch.count { it.userName.isNullOrBlank() }
+
             val enriched = userNameResolver.enrichMissingUserNames(batch)
+            val missingAfterResolver = enriched.count { it.userName.isNullOrBlank() }
+            resolverRecovered += (missingBeforeResolver - missingAfterResolver)
+            unresolvedAfterResolver += missingAfterResolver
+
+            log.info(
+                "CSV export batch exportId={} batch={} size={} repositoryResolved={} recoveredByResolver={} unresolvedAfterResolver={}",
+                exportId,
+                batches,
+                batch.size,
+                batch.size - missingBeforeResolver,
+                missingBeforeResolver - missingAfterResolver,
+                missingAfterResolver,
+            )
+
             enriched.forEach { msg ->
                 val content =
                     msg.content
@@ -200,17 +226,53 @@ class ExportService(
                 writer.newLine()
             }
         }
+
+        log.info(
+            "CSV export enrichment summary exportId={} batches={} totalMessages={} repositoryResolved={} recoveredByResolver={} unresolvedAfterResolver={}",
+            exportId,
+            batches,
+            totalMessages,
+            repositoryResolved,
+            resolverRecovered,
+            unresolvedAfterResolver,
+        )
     }
 
     private fun exportJson(
         writer: BufferedWriter,
         req: MessageReportRequest,
+        exportId: String,
     ) {
         writer.write("[")
         var first = true
 
+        var batches = 0
+        var totalMessages = 0
+        var repositoryResolved = 0
+        var resolverRecovered = 0
+        var unresolvedAfterResolver = 0
+
         messageRepository.streamMessages(req, batchSize = 1000) { batch ->
+            batches += 1
+            totalMessages += batch.size
+            repositoryResolved += batch.count { !it.userName.isNullOrBlank() }
+            val missingBeforeResolver = batch.count { it.userName.isNullOrBlank() }
+
             val enriched = userNameResolver.enrichMissingUserNames(batch)
+            val missingAfterResolver = enriched.count { it.userName.isNullOrBlank() }
+            resolverRecovered += (missingBeforeResolver - missingAfterResolver)
+            unresolvedAfterResolver += missingAfterResolver
+
+            log.info(
+                "JSON export batch exportId={} batch={} size={} repositoryResolved={} recoveredByResolver={} unresolvedAfterResolver={}",
+                exportId,
+                batches,
+                batch.size,
+                batch.size - missingBeforeResolver,
+                missingBeforeResolver - missingAfterResolver,
+                missingAfterResolver,
+            )
+
             enriched.forEach { msg ->
                 if (!first) writer.write(",")
                 writer.newLine()
@@ -221,6 +283,16 @@ class ExportService(
 
         writer.newLine()
         writer.write("]")
+
+        log.info(
+            "JSON export enrichment summary exportId={} batches={} totalMessages={} repositoryResolved={} recoveredByResolver={} unresolvedAfterResolver={}",
+            exportId,
+            batches,
+            totalMessages,
+            repositoryResolved,
+            resolverRecovered,
+            unresolvedAfterResolver,
+        )
     }
 
     private fun ExportFilters.toMessageReportRequest(): MessageReportRequest {

@@ -69,6 +69,12 @@ audit:
       access-key: ${EXPORT_S3_ACCESS_KEY:}
       secret-key: ${EXPORT_S3_SECRET_KEY:}
       path-style-access: ${EXPORT_S3_PATH_STYLE_ACCESS:false}
+      max-connections: ${EXPORT_S3_MAX_CONNECTIONS:50}
+      connection-timeout-ms: ${EXPORT_S3_CONNECTION_TIMEOUT_MS:3000}
+      socket-timeout-ms: ${EXPORT_S3_SOCKET_TIMEOUT_MS:5000}
+      connection-acquisition-timeout-ms: ${EXPORT_S3_CONNECTION_ACQUISITION_TIMEOUT_MS:3000}
+      connection-max-idle-ms: ${EXPORT_S3_CONNECTION_MAX_IDLE_MS:20000}
+      connection-ttl-ms: ${EXPORT_S3_CONNECTION_TTL_MS:60000}
       key-prefix: ${EXPORT_S3_KEY_PREFIX:audit/exports}
       presign-expiry-seconds: ${EXPORT_S3_PRESIGN_EXPIRY_SECONDS:900}
   rate-limit:
