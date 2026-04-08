@@ -43,17 +43,53 @@ class IncidentService(
     @Scheduled(fixedDelayString = "\${audit.incidents.detection-interval-seconds:300}000")
     fun runDetection() {
         log.debug("Running incident detection rules")
+        
         try {
             detectBruteForce()
+        } catch (e: Exception) {
+            log.error("Detector failed: detectBruteForce", e)
+        }
+        
+        try {
             detectConcurrentSessions()
+        } catch (e: Exception) {
+            log.error("Detector failed: detectConcurrentSessions", e)
+        }
+        
+        try {
             detectMassDelete()
+        } catch (e: Exception) {
+            log.error("Detector failed: detectMassDelete", e)
+        }
+        
+        try {
             detectVolumeAnomaly()
+        } catch (e: Exception) {
+            log.error("Detector failed: detectVolumeAnomaly", e)
+        }
+        
+        try {
             detectTopicEnumeration()
+        } catch (e: Exception) {
+            log.error("Detector failed: detectTopicEnumeration", e)
+        }
+        
+        try {
             detectInactiveAccountActivation()
+        } catch (e: Exception) {
+            log.error("Detector failed: detectInactiveAccountActivation", e)
+        }
+        
+        try {
             detectOffHoursActivity()
+        } catch (e: Exception) {
+            log.error("Detector failed: detectOffHoursActivity", e)
+        }
+        
+        try {
             detectPrivilegeEscalation()
         } catch (e: Exception) {
-            log.error("Incident detection failed", e)
+            log.error("Detector failed: detectPrivilegeEscalation", e)
         }
     }
 

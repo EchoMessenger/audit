@@ -466,7 +466,7 @@
 **Query parameters:**
 
 * `status` (optional) — фильтр по статусу: `open`, `confirmed`, `dismissed`
-* `type` (optional) — фильтр по типу: `anomaly.login`, `anomaly.rate`, и т.д.
+* `type` (optional) — фильтр по типу: `brute_force`, `concurrent_sessions`, `mass_delete`, `volume_anomaly`, `topic_enumeration`, `inactive_account_activation`, `off_hours_activity`, `privilege_escalation`
 * `userId` (optional) — фильтр по пользователю
 * `limit` (optional, default: 100, max: 1000)
 
@@ -479,12 +479,13 @@ Note: This endpoint does not use cursor-based pagination (exception to section 2
   "incidents": [
     {
       "incidentId": "inc-123",
-      "type": "anomaly.login",
+      "type": "brute_force",
       "status": "open",
       "detectedAt": 1736760000000,
       "userId": "usr1",
       "details": {
-        "reason": "Multiple failed login attempts"
+        "failed_login_attempts": 12,
+        "window_minutes": 5
       },
       "updatedAt": 1736760000000
     }
@@ -511,7 +512,7 @@ Note: This endpoint does not use cursor-based pagination (exception to section 2
 {
   "incident": {
     "incidentId": "inc-123",
-    "type": "anomaly.login",
+    "type": "brute_force",
     "status": "open",
     "detectedAt": 1736760000000,
     "userId": "usr1",
@@ -567,7 +568,7 @@ Note: This endpoint does not use cursor-based pagination (exception to section 2
 ```json
 {
   "incidentId": "inc-123",
-  "type": "anomaly.login",
+  "type": "brute_force",
   "status": "confirmed",
   "detectedAt": 1736760000000,
   "userId": "usr1",

@@ -43,10 +43,9 @@ CREATE TABLE IF NOT EXISTS audit.mv_daily_message_stats_store (
 PARTITION BY toYYYYMM(day)
 ORDER BY (day, msg_type);
 
--- 2) Writers (with POPULATE for historical rows)
+-- 2) Writers (attach to stores; POPULATE removed for atomic backfill control)
 CREATE MATERIALIZED VIEW IF NOT EXISTS audit.mv_daily_msg_type_stats_writer
 TO audit.mv_daily_msg_type_stats_store
-POPULATE
 AS
 SELECT
     toDate(log_timestamp) AS day,
@@ -57,7 +56,6 @@ GROUP BY day, msg_type;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS audit.mv_daily_user_activity_writer
 TO audit.mv_daily_user_activity_store
-POPULATE
 AS
 SELECT
     toDate(log_timestamp) AS day,
@@ -69,7 +67,6 @@ GROUP BY day, usr_id;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS audit.mv_hourly_load_stats_writer
 TO audit.mv_hourly_load_stats_store
-POPULATE
 AS
 SELECT
     toStartOfHour(log_timestamp) AS hour_ts,
@@ -80,7 +77,6 @@ GROUP BY hour_ts, msg_type;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS audit.mv_daily_message_stats_writer
 TO audit.mv_daily_message_stats_store
-POPULATE
 AS
 SELECT
     toDate(log_timestamp) AS day,

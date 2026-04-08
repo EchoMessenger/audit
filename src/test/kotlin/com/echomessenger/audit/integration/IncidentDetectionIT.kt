@@ -237,10 +237,16 @@ class IncidentDetectionIT : IntegrationTestBase() {
     @Test
     fun `detectOffHoursActivity creates incident for user with 20+ requests outside business hours`() {
         val userId = "offhours_${UUID.randomUUID().toString().take(8)}"
-        // Build explicit 02:00 timestamp in business timezone (Europe/Moscow)
+        // Use past 02:00 timestamp in business timezone (Europe/Moscow)
         val businessZone = ZoneId.of("Europe/Moscow")
-        val today = LocalDate.now(businessZone)
-        val offHours02am = ZonedDateTime.of(today, LocalTime.of(2, 0, 0), businessZone)
+        val now = ZonedDateTime.now(businessZone)
+        val today = now.toLocalDate()
+        val timeOfDay = now.toLocalTime()
+        val twoAm = LocalTime.of(2, 0, 0)
+        
+        // Pick the most recent past 02:00
+        val offHoursDate = if (timeOfDay >= twoAm) today else today.minusDays(1)
+        val offHours02am = ZonedDateTime.of(offHoursDate, twoAm, businessZone)
         val offHoursTs = offHours02am.toInstant()
 
         repeat(22) { i ->
