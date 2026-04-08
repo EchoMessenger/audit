@@ -20,6 +20,17 @@ class UserNameResolver(
 ) {
     private val log = LoggerFactory.getLogger(UserNameResolver::class.java)
 
+    enum class UserLookupStatus {
+        FOUND,
+        NOT_FOUND,
+        UNAVAILABLE,
+    }
+
+    data class UserLookupResult(
+        val status: UserLookupStatus,
+        val displayName: String? = null,
+    )
+
     private val restClient: RestClient? =
         restauthBaseUrl.trim().takeIf { it.isNotEmpty() }?.let { baseUrl ->
             val rf =
@@ -44,13 +55,37 @@ class UserNameResolver(
             .expireAfterWrite(negativeCacheTtlSeconds, TimeUnit.SECONDS)
             .build<String, Boolean>()
 
-    fun resolveDisplayName(tinodeUid: String?): String? {
-        val uid = tinodeUid?.trim().takeIf { !it.isNullOrEmpty() } ?: return null
+    private val emptyDisplayCache =
+        Caffeine
+            .newBuilder()
+            .maximumSize(cacheSize)
+            .expireAfterWrite(negativeCacheTtlSeconds, TimeUnit.SECONDS)
+            .build<String, Boolean>()
 
-        positiveCache.getIfPresent(uid)?.let { return it }
-        if (negativeCache.getIfPresent(uid) == true) return null
+    fun resolveDisplayName(tinodeUid: String?): String? = lookupUser(tinodeUid).displayName
 
-        val client = restClient ?: return null
+    fun lookupUser(tinodeUid: String?): UserLookupResult {
+        val uid = tinodeUid?.trim().takeIf { !it.isNullOrEmpty() }
+            ?: return UserLookupResult(UserLookupStatus.NOT_FOUND)
+
+        positiveCache.getIfPresent(uid)?.let {
+            return UserLookupResult(
+                status = UserLookupStatus.FOUND,
+                displayName = it,
+            )
+        }
+        if (emptyDisplayCache.getIfPresent(uid) == true) {
+            return UserLookupResult(UserLookupStatus.FOUND)
+        }
+        if (negativeCache.getIfPresent(uid) == true) {
+            return UserLookupResult(UserLookupStatus.NOT_FOUND)
+        }
+
+        val client = restClient
+        if (client == null) {
+            log.warn("RESTAUTH_BASE_URL is not configured, cannot resolve user uid={}", uid)
+            return UserLookupResult(UserLookupStatus.UNAVAILABLE)
+        }
 
         return try {
             val resp =
@@ -63,23 +98,27 @@ class UserNameResolver(
             val display = resp?.displayName?.trim().takeIf { !it.isNullOrEmpty() }
             if (display != null) {
                 positiveCache.put(uid, display)
-                return display
+            } else {
+                // Mapping may exist with empty display name, cache short-term to avoid repeated calls.
+                emptyDisplayCache.put(uid, true)
             }
 
-            // If mapping exists but name is empty — treat as negative for a short time.
-            negativeCache.put(uid, true)
-            null
+            UserLookupResult(
+                status = UserLookupStatus.FOUND,
+                displayName = display,
+            )
         } catch (e: HttpClientErrorException) {
             if (e.statusCode == HttpStatus.NOT_FOUND) {
                 negativeCache.put(uid, true)
-                return null
+                return UserLookupResult(UserLookupStatus.NOT_FOUND)
             }
+
             log.warn("User resolve failed (uid={} status={})", uid, e.statusCode.value())
-            null
+            UserLookupResult(UserLookupStatus.UNAVAILABLE)
         } catch (e: Exception) {
-            // graceful fallback: do not fail report/export
+            // graceful fallback: do not fail report/export when restauth is temporarily unavailable
             log.warn("User resolve failed (uid={})", uid, e)
-            null
+            UserLookupResult(UserLookupStatus.UNAVAILABLE)
         }
     }
 

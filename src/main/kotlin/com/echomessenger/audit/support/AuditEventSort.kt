@@ -25,9 +25,20 @@ object AuditEventSort {
         val rightUuid = safeUuid(rightRaw)
 
         return when {
-            leftUuid != null && rightUuid != null -> rightUuid.compareTo(leftUuid)
+            // ClickHouse compares UUID as UInt128 with least-significant bits first.
+            // Keep the same order in-memory, otherwise cursor pagination may duplicate rows.
+            leftUuid != null && rightUuid != null -> compareUuidLsbFirst(rightUuid, leftUuid)
             else -> rightRaw.compareTo(leftRaw)
         }
+    }
+
+    private fun compareUuidLsbFirst(
+        left: UUID,
+        right: UUID,
+    ): Int {
+        val lsb = java.lang.Long.compare(left.leastSignificantBits, right.leastSignificantBits)
+        if (lsb != 0) return lsb
+        return java.lang.Long.compare(left.mostSignificantBits, right.mostSignificantBits)
     }
 
     private fun safeUuid(raw: String): UUID? = runCatching { UUID.fromString(raw) }.getOrNull()

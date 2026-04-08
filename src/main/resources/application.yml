@@ -83,11 +83,37 @@ audit:
   incidents:
     detection-interval-seconds: 300
     rules:
+      # R1: Brute Force Detection
       brute-force-threshold: 10
       brute-force-window-minutes: 5
-      mass-delete-threshold: 5
+      
+      # R2: Concurrent Sessions (replaces device_switch)
+      concurrent-sessions-threshold: 3
+      concurrent-sessions-window-minutes: 15
+      
+      # R3: Mass Delete
+      mass-delete-threshold: 10
       mass-delete-window-seconds: 60
+      
+      # R4: Volume Anomaly
       volume-anomaly-multiplier: 10.0
+      volume-anomaly-min-threshold: 50
+      
+      # R5: Topic Enumeration
+      topic-enumeration-threshold: 5
+      topic-enumeration-window-minutes: 10
+      
+      # R6: Inactive Account Activation
+      inactive-activation-inactivity-days: 30
+      inactive-activation-multiplier: 5.0
+      
+      # R7: Off-Hours Activity
+      off-hours-start: 09:00
+      off-hours-end: 19:00
+      off-hours-time-zone: Europe/Moscow
+      off-hours-threshold: 20
+      
+      # R8: Privilege Escalation (single-event rule, no threshold)
 
 logging:
   level:

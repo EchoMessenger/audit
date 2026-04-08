@@ -168,7 +168,8 @@ class AuditRepositoryIT : IntegrationTestBase() {
 
     @Test
     fun `findEvents cursor pagination traverses all results`() {
-        // user1: 3 client_req (LOGIN, LOGIN, BYE) + 3 message (PUB, EDIT, DEL) = 6
+        val expectedAll = auditRepository.findEvents(userId = user1, limit = 100).data.map { it.eventId }
+
         val allEvents = mutableListOf<String>()
         var cursor: String? = null
         var iterations = 0
@@ -180,8 +181,13 @@ class AuditRepositoryIT : IntegrationTestBase() {
             iterations++
         } while (cursor != null && iterations < 10)
 
-        assertEquals(6, allEvents.size, "Expected 6 events for user1, got ${allEvents.size}")
+        assertEquals(
+            expectedAll.size,
+            allEvents.size,
+            "Expected ${expectedAll.size} paginated events for $user1, got ${allEvents.size}",
+        )
         assertEquals(allEvents.size, allEvents.toSet().size, "Found duplicate event IDs: $allEvents")
+        assertEquals(expectedAll.toSet(), allEvents.toSet(), "Paginated traversal missed or added unexpected events")
     }
 
     @Test

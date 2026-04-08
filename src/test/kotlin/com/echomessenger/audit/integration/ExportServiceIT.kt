@@ -5,6 +5,7 @@ import com.echomessenger.audit.repository.ExportRepository
 import com.echomessenger.audit.repository.MessageRepository
 import com.echomessenger.audit.service.ExportService
 import com.echomessenger.audit.service.UserNameResolver
+import io.mockk.every
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -40,6 +41,11 @@ class ExportServiceIT : IntegrationTestBase() {
     @Autowired private lateinit var messageRepository: MessageRepository
     @Autowired private lateinit var jdbc: NamedParameterJdbcTemplate
     private val userNameResolver: UserNameResolver = io.mockk.mockk(relaxed = true)
+
+    init {
+        every { userNameResolver.lookupUser(any()) } returns
+            UserNameResolver.UserLookupResult(UserNameResolver.UserLookupStatus.FOUND)
+    }
 
     @TempDir lateinit var tempDir: Path
 
@@ -114,7 +120,36 @@ class ExportServiceIT : IntegrationTestBase() {
     }
 
     @Test
-    fun `export with no matching data completes successfully with empty file`() {
+    fun `export accepts restauth tinode uid when ClickHouse stores usr-prefixed id`() {
+        val restauthUid = "uid_${UUID.randomUUID().toString().take(8)}"
+        val clickhouseUid = "usr$restauthUid"
+        seedMessages(clickhouseUid)
+
+        val job = service().startExport(
+            ExportRequest(
+                filters = ExportFilters(
+                    userId = restauthUid,
+                    fromTs = System.currentTimeMillis() - 3_600_000,
+                    toTs = System.currentTimeMillis(),
+                ),
+                format = ExportFormat.csv,
+            ),
+        )
+
+        Thread.sleep(3000)
+
+        val completed = (1..20).asSequence()
+            .map { Thread.sleep(500); exportRepository.findById(job.exportId) }
+            .firstOrNull { it?.status == ExportStatus.completed || it?.status == ExportStatus.failed }
+
+        assertNotNull(completed)
+        assertEquals(ExportStatus.completed, completed!!.status, "error: ${completed.errorMessage}")
+        val files = tempDir.listDirectoryEntries("${job.exportId}.csv")
+        assertTrue(files.isNotEmpty())
+    }
+
+    @Test
+    fun `export with no matching data fails with no message records error`() {
         val job = service().startExport(
             ExportRequest(
                 filters = ExportFilters(
@@ -129,7 +164,40 @@ class ExportServiceIT : IntegrationTestBase() {
         Thread.sleep(3000)
 
         val completed = exportRepository.findById(job.exportId)
-        assertEquals(ExportStatus.completed, completed?.status)
+        assertEquals(ExportStatus.failed, completed?.status)
+        assertTrue(
+            completed?.errorMessage?.contains("no message records found", ignoreCase = true) == true,
+            "Unexpected error message: ${completed?.errorMessage}",
+        )
+    }
+
+    @Test
+    fun `export fails with restauth user not found error`() {
+        every { userNameResolver.lookupUser(any()) } returns
+            UserNameResolver.UserLookupResult(UserNameResolver.UserLookupStatus.NOT_FOUND)
+
+        val job = service().startExport(
+            ExportRequest(
+                filters = ExportFilters(
+                    userId = "missing-restauth-user",
+                    fromTs = System.currentTimeMillis() - 3_600_000,
+                    toTs = System.currentTimeMillis(),
+                ),
+                format = ExportFormat.csv,
+            ),
+        )
+
+        Thread.sleep(3000)
+
+        val completed = exportRepository.findById(job.exportId)
+        assertEquals(ExportStatus.failed, completed?.status)
+        assertTrue(
+            completed?.errorMessage?.contains("restauth user not found", ignoreCase = true) == true,
+            "Unexpected error message: ${completed?.errorMessage}",
+        )
+
+        every { userNameResolver.lookupUser(any()) } returns
+            UserNameResolver.UserLookupResult(UserNameResolver.UserLookupStatus.FOUND)
     }
 
     @Test

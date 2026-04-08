@@ -3,6 +3,7 @@ package com.echomessenger.audit.service
 import com.echomessenger.audit.domain.*
 import com.echomessenger.audit.repository.ExportRepository
 import com.echomessenger.audit.repository.MessageRepository
+import com.echomessenger.audit.service.UserNameResolver.UserLookupStatus
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -88,11 +89,13 @@ class ExportService(
 
         try {
             val messageReportReq = request.filters.toMessageReportRequest()
+            val clickHouseReq = normalizeUsersForClickHouse(messageReportReq)
+            validateExportPreconditions(messageReportReq, clickHouseReq)
 
             BufferedWriter(FileWriter(outputFile)).use { writer ->
                 when (job.format) {
-                    ExportFormat.csv -> exportCsv(writer, messageReportReq, job.exportId)
-                    ExportFormat.json -> exportJson(writer, messageReportReq, job.exportId)
+                    ExportFormat.csv -> exportCsv(writer, clickHouseReq, job.exportId)
+                    ExportFormat.json -> exportJson(writer, clickHouseReq, job.exportId)
                 }
             }
 
@@ -305,6 +308,82 @@ class ExportService(
             toTs = toTs ?: System.currentTimeMillis(),
             includeDeleted = includeDeleted ?: false,
         )
+    }
+
+    private fun validateExportPreconditions(
+        originalReq: MessageReportRequest,
+        clickHouseReq: MessageReportRequest,
+    ) {
+        val requestedUsers =
+            originalReq.users
+                ?.asSequence()
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.toList()
+                .orEmpty()
+
+        if (requestedUsers.isNotEmpty()) {
+            val notFoundUsers = mutableListOf<String>()
+            val unavailableUsers = mutableListOf<String>()
+            val usersForRestauth = requestedUsers.map(::toRestauthTinodeUid).distinct()
+
+            usersForRestauth.forEach { uid ->
+                when (userNameResolver.lookupUser(uid).status) {
+                    UserLookupStatus.FOUND -> Unit
+                    UserLookupStatus.NOT_FOUND -> notFoundUsers.add(uid)
+                    UserLookupStatus.UNAVAILABLE -> unavailableUsers.add(uid)
+                }
+            }
+
+            if (notFoundUsers.isNotEmpty()) {
+                val suffix = notFoundUsers.joinToString(",")
+                throw IllegalStateException("restauth user not found: $suffix")
+            }
+
+            if (unavailableUsers.isNotEmpty()) {
+                val suffix = unavailableUsers.joinToString(",")
+                throw IllegalStateException("failed to resolve user in restauth: $suffix")
+            }
+        }
+
+        val totalMessages = messageRepository.countMessages(clickHouseReq)
+        if (totalMessages == 0L) {
+            if (requestedUsers.size == 1) {
+                throw IllegalStateException(
+                    "no message records found for user: ${toRestauthTinodeUid(requestedUsers.first())}",
+                )
+            }
+            throw IllegalStateException("no message records found for the selected filters")
+        }
+    }
+
+    private fun normalizeUsersForClickHouse(req: MessageReportRequest): MessageReportRequest {
+        val normalizedUsers =
+            req.users
+                ?.flatMap { user -> clickHouseUserCandidates(user) }
+                ?.distinct()
+
+        return req.copy(users = normalizedUsers)
+    }
+
+    private fun clickHouseUserCandidates(rawUserId: String): List<String> {
+        val userId = rawUserId.trim()
+        if (userId.isEmpty()) return emptyList()
+
+        return if (userId.startsWith("usr") && userId.length > 3) {
+            listOf(userId, userId.removePrefix("usr"))
+        } else {
+            listOf(userId, "usr$userId")
+        }
+    }
+
+    private fun toRestauthTinodeUid(rawUserId: String): String {
+        val userId = rawUserId.trim()
+        return if (userId.startsWith("usr") && userId.length > 3) {
+            userId.removePrefix("usr")
+        } else {
+            userId
+        }
     }
 
     private fun resolveOutputFile(
