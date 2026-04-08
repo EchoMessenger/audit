@@ -226,8 +226,9 @@ abstract class IntegrationTestBase {
                     completed_at    DateTime64(3) DEFAULT toDateTime64(0, 3),
                     download_url    String        DEFAULT '',
                     error_message   String        DEFAULT '',
-                    file_size_bytes Int64         DEFAULT 0
-                ) ENGINE = ReplacingMergeTree(created_at) ORDER BY (export_id)""",
+                    file_size_bytes Int64         DEFAULT 0,
+                    row_version     UInt64        DEFAULT 0
+                ) ENGINE = ReplacingMergeTree(row_version) ORDER BY (export_id)""",
 
                 // ============================================
                 // TARGET TABLES для Materialized Views

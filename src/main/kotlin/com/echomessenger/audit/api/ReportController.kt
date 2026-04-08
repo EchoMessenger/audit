@@ -51,7 +51,9 @@ class ReportController(
                 ExportRequest(
                     filters =
                         ExportFilters(
-                            userId = req.users?.firstOrNull(),
+                            users = req.users,
+                            topics = req.topics,
+                            includeDeleted = req.includeDeleted,
                             fromTs = req.fromTs,
                             toTs = req.toTs,
                         ),

@@ -4,6 +4,7 @@ import com.echomessenger.audit.domain.MessageReportItem
 import com.echomessenger.audit.domain.MessageReportRequest
 import com.echomessenger.audit.repository.MessageRepository
 import com.echomessenger.audit.service.ReportService
+import com.echomessenger.audit.service.UserNameResolver
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -13,7 +14,8 @@ import java.util.concurrent.TimeUnit
 
 class ReportServiceTest {
     private val messageRepository: MessageRepository = mockk()
-    private val service = ReportService(messageRepository)
+    private val userNameResolver: UserNameResolver = mockk(relaxed = true)
+    private val service = ReportService(messageRepository, userNameResolver)
 
     private val now = System.currentTimeMillis()
     private val dayMs = TimeUnit.DAYS.toMillis(1)
@@ -61,6 +63,7 @@ class ReportServiceTest {
                 messageItem(2L),
                 messageItem(3L),
             )
+        every { userNameResolver.enrichMissingUserNames(any<List<MessageReportItem>>()) } answers { firstArg() }
 
         val report = service.generateReport(req)
 
@@ -74,6 +77,7 @@ class ReportServiceTest {
     fun `generateReport calls repository with correct limit`() {
         val req = request(fromTs = now - dayMs, toTs = now)
         every { messageRepository.findMessages(req, 10_000) } returns emptyList()
+        every { userNameResolver.enrichMissingUserNames(any<List<MessageReportItem>>()) } answers { firstArg() }
 
         service.generateReport(req)
 
@@ -93,6 +97,7 @@ class ReportServiceTest {
     fun `generateReport with empty result returns zero messages`() {
         val req = request(fromTs = now - dayMs, toTs = now)
         every { messageRepository.findMessages(req, any()) } returns emptyList()
+        every { userNameResolver.enrichMissingUserNames(any<List<MessageReportItem>>()) } answers { firstArg() }
 
         val report = service.generateReport(req)
 
@@ -110,6 +115,7 @@ class ReportServiceTest {
                 topics = listOf("topic1"),
             )
         every { messageRepository.findMessages(req, any()) } returns emptyList()
+        every { userNameResolver.enrichMissingUserNames(any<List<MessageReportItem>>()) } answers { firstArg() }
 
         service.generateReport(req)
 

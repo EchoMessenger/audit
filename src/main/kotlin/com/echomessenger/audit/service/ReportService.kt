@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit
 @Service
 class ReportService(
     private val messageRepository: MessageRepository,
+    private val userNameResolver: UserNameResolver,
 ) {
     companion object {
         // Порог: если период > 7 дней — редиректим на async export
@@ -30,7 +31,7 @@ class ReportService(
             "Period exceeds ${SYNC_MAX_DAYS}d — use async export"
         }
 
-        val messages = messageRepository.findMessages(req, limit = 10_000)
+        val messages = userNameResolver.enrichMissingUserNames(messageRepository.findMessages(req, limit = 10_000))
         return MessageReport(
             reportId = UUID.randomUUID().toString(),
             generatedAt = System.currentTimeMillis(),

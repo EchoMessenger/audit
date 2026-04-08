@@ -55,6 +55,11 @@ dependencies {
     implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("io.micrometer:micrometer-tracing-bridge-otel")
 
+    // Object storage (S3 / MinIO)
+    implementation(platform("software.amazon.awssdk:bom:2.32.18"))
+    implementation("software.amazon.awssdk:s3")
+    implementation("software.amazon.awssdk:apache-client")
+
     // Testing
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
@@ -63,6 +68,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
     testImplementation("io.mockk:mockk:1.13.16")
     testImplementation("com.ninja-squad:springmockk:4.0.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 configurations.all {

@@ -129,6 +129,11 @@ data class ExportRequest(
 data class ExportFilters(
     val userId: String? = null,
     val topicId: String? = null,
+    /** Список пользователей; если задан, имеет приоритет над [userId]. */
+    val users: List<String>? = null,
+    /** Список топиков; если задан, имеет приоритет над [topicId]. */
+    val topics: List<String>? = null,
+    val includeDeleted: Boolean? = null,
     val eventType: String? = null,
     val fromTs: Long? = null,
     val toTs: Long? = null,
@@ -158,12 +163,15 @@ data class MessageReportRequest(
 data class MessageReportItem(
     val messageId: Long,
     val topicId: String,
-    val userId: String,
-    val userName: String?,
+    override val userId: String?,
+    override val userName: String?,
     val timestamp: Long,
     val content: String?,
     val isDeleted: Boolean,
-)
+) : com.echomessenger.audit.service.UserNameResolver.MessageWithUserName {
+    override fun withUserName(userName: String): com.echomessenger.audit.service.UserNameResolver.MessageWithUserName =
+        copy(userName = userName)
+}
 
 data class MessageReport(
     val reportId: String,

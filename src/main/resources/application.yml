@@ -64,17 +64,56 @@ audit:
     s3:
       bucket: ${EXPORT_S3_BUCKET:audit-exports}
       region: ${EXPORT_S3_REGION:us-east-1}
+      endpoint: ${EXPORT_S3_ENDPOINT:}
+      public-endpoint: ${EXPORT_S3_PUBLIC_ENDPOINT:}
+      access-key: ${EXPORT_S3_ACCESS_KEY:}
+      secret-key: ${EXPORT_S3_SECRET_KEY:}
+      path-style-access: ${EXPORT_S3_PATH_STYLE_ACCESS:false}
+      max-connections: ${EXPORT_S3_MAX_CONNECTIONS:50}
+      connection-timeout-ms: ${EXPORT_S3_CONNECTION_TIMEOUT_MS:3000}
+      socket-timeout-ms: ${EXPORT_S3_SOCKET_TIMEOUT_MS:5000}
+      connection-acquisition-timeout-ms: ${EXPORT_S3_CONNECTION_ACQUISITION_TIMEOUT_MS:3000}
+      connection-max-idle-ms: ${EXPORT_S3_CONNECTION_MAX_IDLE_MS:20000}
+      connection-ttl-ms: ${EXPORT_S3_CONNECTION_TTL_MS:60000}
+      key-prefix: ${EXPORT_S3_KEY_PREFIX:audit/exports}
+      presign-expiry-seconds: ${EXPORT_S3_PRESIGN_EXPIRY_SECONDS:900}
   rate-limit:
     reports-per-minute: 5
     export-per-minute: 2
   incidents:
     detection-interval-seconds: 300
     rules:
+      # R1: Brute Force Detection
       brute-force-threshold: 10
       brute-force-window-minutes: 5
-      mass-delete-threshold: 5
+      
+      # R2: Concurrent Sessions (replaces device_switch)
+      concurrent-sessions-threshold: 3
+      concurrent-sessions-window-minutes: 15
+      
+      # R3: Mass Delete
+      mass-delete-threshold: 10
       mass-delete-window-seconds: 60
+      
+      # R4: Volume Anomaly
       volume-anomaly-multiplier: 10.0
+      volume-anomaly-min-threshold: 50
+      
+      # R5: Topic Enumeration
+      topic-enumeration-threshold: 5
+      topic-enumeration-window-minutes: 10
+      
+      # R6: Inactive Account Activation
+      inactive-activation-inactivity-days: 30
+      inactive-activation-multiplier: 5.0
+      
+      # R7: Off-Hours Activity
+      off-hours-start: 09:00
+      off-hours-end: 19:00
+      off-hours-time-zone: Europe/Moscow
+      off-hours-threshold: 20
+      
+      # R8: Privilege Escalation (single-event rule, no threshold)
 
 logging:
   level:

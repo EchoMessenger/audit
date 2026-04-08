@@ -1,6 +1,7 @@
 package com.echomessenger.audit.integration
 
 import com.echomessenger.audit.repository.AuditRepository
+import com.echomessenger.audit.support.AuditEventMapping
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -167,7 +168,8 @@ class AuditRepositoryIT : IntegrationTestBase() {
 
     @Test
     fun `findEvents cursor pagination traverses all results`() {
-        // user1: 3 client_req (LOGIN, LOGIN, BYE) + 3 message (PUB, EDIT, DEL) = 6
+        val expectedAll = auditRepository.findEvents(userId = user1, limit = 100).data.map { it.eventId }
+
         val allEvents = mutableListOf<String>()
         var cursor: String? = null
         var iterations = 0
@@ -179,8 +181,13 @@ class AuditRepositoryIT : IntegrationTestBase() {
             iterations++
         } while (cursor != null && iterations < 10)
 
-        assertEquals(6, allEvents.size, "Expected 6 events for user1, got ${allEvents.size}")
+        assertEquals(
+            expectedAll.size,
+            allEvents.size,
+            "Expected ${expectedAll.size} paginated events for $user1, got ${allEvents.size}",
+        )
         assertEquals(allEvents.size, allEvents.toSet().size, "Found duplicate event IDs: $allEvents")
+        assertEquals(expectedAll.toSet(), allEvents.toSet(), "Paginated traversal missed or added unexpected events")
     }
 
     @Test
@@ -226,7 +233,7 @@ class AuditRepositoryIT : IntegrationTestBase() {
         mappings.forEach { (msgType, expected) ->
             assertEquals(
                 expected,
-                AuditRepository.mapMsgTypeToEventType(msgType),
+                AuditEventMapping.mapSimpleMsgTypeToEventType(msgType),
                 "msg_type=$msgType should map to event_type=$expected",
             )
         }
@@ -235,9 +242,70 @@ class AuditRepositoryIT : IntegrationTestBase() {
     @Test
     fun `mapEventTypeToMsgTypes is inverse of mapMsgTypeToEventType`() {
         val eventType = "message.create"
-        val msgTypes = AuditRepository.mapEventTypeToMsgTypes(eventType)
+        val msgTypes = AuditEventMapping.mapEventTypeToMsgTypes(eventType)
         assertNotNull(msgTypes, "Should return msgTypes for event_type=$eventType")
         assertTrue(msgTypes!!.isNotEmpty(), "msgTypes should not be empty")
-        assertEquals(eventType, AuditRepository.mapMsgTypeToEventType(msgTypes.first()))
+        assertEquals(eventType, AuditEventMapping.mapSimpleMsgTypeToEventType(msgTypes.first()))
+    }
+
+    @Test
+    fun `contextual mapping resolves SUB by sub_topic`() {
+        assertEquals(
+            "subscription.me",
+            AuditEventMapping.mapMsgTypeToEventType(
+                msgType = "SUB",
+                subTopic = "me",
+                getWhat = null,
+                setTopic = null,
+                delWhat = null,
+            ),
+        )
+
+        assertEquals(
+            "topic.create",
+            AuditEventMapping.mapMsgTypeToEventType(
+                msgType = "SUB",
+                subTopic = "new",
+                getWhat = null,
+                setTopic = null,
+                delWhat = null,
+            ),
+        )
+
+        assertEquals(
+            "subscription.join",
+            AuditEventMapping.mapMsgTypeToEventType(
+                msgType = "SUB",
+                subTopic = "grp_general",
+                getWhat = null,
+                setTopic = null,
+                delWhat = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `contextual mapping resolves DEL by del_what`() {
+        assertEquals(
+            "message.delete",
+            AuditEventMapping.mapMsgTypeToEventType(
+                msgType = "DEL",
+                subTopic = null,
+                getWhat = null,
+                setTopic = null,
+                delWhat = "MSG",
+            ),
+        )
+
+        assertEquals(
+            "subscription.leave",
+            AuditEventMapping.mapMsgTypeToEventType(
+                msgType = "DEL",
+                subTopic = null,
+                getWhat = null,
+                setTopic = null,
+                delWhat = "SUB",
+            ),
+        )
     }
 }

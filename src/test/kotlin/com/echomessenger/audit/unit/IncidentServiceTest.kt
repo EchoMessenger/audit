@@ -20,9 +20,20 @@ class IncidentServiceTest {
             jdbc = jdbc,
             bruteForceThreshold = 10,
             bruteForceWindowMinutes = 5,
-            massDeleteThreshold = 5,
+            concurrentSessionsThreshold = 3,
+            concurrentSessionsWindowMinutes = 15,
+            massDeleteThreshold = 10,
             massDeleteWindowSeconds = 60,
             volumeAnomalyMultiplier = 10.0,
+            volumeAnomalyMinThreshold = 50,
+            topicEnumerationThreshold = 5,
+            topicEnumerationWindowMinutes = 10,
+            inactiveActivationInactivityDays = 30,
+            inactiveActivationMultiplier = 5.0,
+            offHoursStart = "09:00",
+            offHoursEnd = "19:00",
+            offHoursTimeZone = "Europe/Moscow",
+            offHoursThreshold = 20,
         )
 
     @BeforeEach
