@@ -353,9 +353,10 @@
 ```json
 {
   "message": "Period exceeds 7 days — export started asynchronously",
-  "export_id": "exp-uuid",
+  "exportId": "exp-uuid",
   "status": "pending",
-  "poll_url": "/api/v1/audit/export/exp-uuid"
+  "createdAt": 1736900000000,
+  "pollUrl": "/api/v1/audit/export/exp-uuid"
 }
 ```
 
@@ -470,6 +471,8 @@
 * `limit` (optional, default: 100, max: 1000)
 
 **Response:**
+
+Note: This endpoint does not use cursor-based pagination (exception to section 2.2). Returns a simple array response.
 
 ```json
 {
@@ -653,7 +656,7 @@
   "format": "csv",
   "createdAt": 1736900000000,
   "completedAt": 1736900060000,
-  "downloadUrl": "https://s3.amazonaws.com/bucket/exp-123.csv",
+  "downloadUrl": "/api/v1/audit/export/exp-123/download",
   "errorMessage": null,
   "fileSizeBytes": 1024000
 }

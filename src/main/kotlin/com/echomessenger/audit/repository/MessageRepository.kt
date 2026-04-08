@@ -172,7 +172,7 @@ class MessageRepository(
 
         return jdbc.query(
             """
-            SELECT user_id, argMax(public, log_timestamp) AS public
+            SELECT user_id, argMax(public, tuple(log_timestamp, log_id)) AS public
             FROM audit.account_log
             WHERE user_id IN (:userIds)
             GROUP BY user_id
@@ -222,11 +222,6 @@ class MessageRepository(
             """
         SELECT count() AS cnt
         FROM audit.message_log m
-        LEFT JOIN (
-            SELECT user_id, argMax(public, log_timestamp) AS public
-            FROM audit.account_log
-            GROUP BY user_id
-        ) AS a ON m.msg_from_user_id = a.user_id
         WHERE ${conditions.joinToString(" AND ")}
         """.trimIndent()
         } else {
@@ -241,7 +236,7 @@ class MessageRepository(
             (toString(m.action) = 'DELETE') AS is_deleted
         FROM audit.message_log m
         LEFT JOIN (
-            SELECT user_id, argMax(public, log_timestamp) AS public
+            SELECT user_id, argMax(public, tuple(log_timestamp, log_id)) AS public
             FROM audit.account_log
             GROUP BY user_id
         ) AS a ON m.msg_from_user_id = a.user_id

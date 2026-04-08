@@ -45,6 +45,7 @@ class ExportServiceIT : IntegrationTestBase() {
     init {
         every { userNameResolver.lookupUser(any()) } returns
             UserNameResolver.UserLookupResult(UserNameResolver.UserLookupStatus.FOUND)
+        every { userNameResolver.enrichMissingUserNames(any<List<ExportItem>>()) } answers { firstArg() }
     }
 
     @TempDir lateinit var tempDir: Path

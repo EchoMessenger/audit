@@ -96,10 +96,11 @@ GROUP BY day, msg_type;
 
 -- 3) Canonical read aliases
 -- Drop old objects with the same names (could be VIEW or MATERIALIZED VIEW in old setups).
-DROP VIEW IF EXISTS audit.mv_daily_msg_type_stats;
-DROP VIEW IF EXISTS audit.mv_daily_user_activity;
-DROP VIEW IF EXISTS audit.mv_hourly_load_stats;
-DROP VIEW IF EXISTS audit.mv_daily_message_stats;
+-- Use DROP TABLE to remove both the view and any implicit internal storage from old materialized views.
+DROP TABLE IF EXISTS audit.mv_daily_msg_type_stats;
+DROP TABLE IF EXISTS audit.mv_daily_user_activity;
+DROP TABLE IF EXISTS audit.mv_hourly_load_stats;
+DROP TABLE IF EXISTS audit.mv_daily_message_stats;
 
 CREATE VIEW IF NOT EXISTS audit.mv_daily_msg_type_stats AS
 SELECT

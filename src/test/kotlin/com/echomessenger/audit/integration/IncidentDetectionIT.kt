@@ -9,7 +9,11 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
@@ -233,8 +237,11 @@ class IncidentDetectionIT : IntegrationTestBase() {
     @Test
     fun `detectOffHoursActivity creates incident for user with 20+ requests outside business hours`() {
         val userId = "offhours_${UUID.randomUUID().toString().take(8)}"
-        // Use a timestamp from 2 AM (definitely outside 09:00-19:00)
-        val offHoursTs = System.currentTimeMillis() - (22 * 3_600_000L) // 22 hours ago
+        // Build explicit 02:00 timestamp in business timezone (Europe/Moscow)
+        val businessZone = ZoneId.of("Europe/Moscow")
+        val today = LocalDate.now(businessZone)
+        val offHours02am = ZonedDateTime.of(today, LocalTime.of(2, 0, 0), businessZone)
+        val offHoursTs = offHours02am.toInstant()
 
         repeat(22) { i ->
             jdbc.update(
@@ -243,7 +250,7 @@ class IncidentDetectionIT : IntegrationTestBase() {
                    VALUES (:id, :ts, :mt, :uid, :al, :ip)""",
                 MapSqlParameterSource()
                     .addValue("id", UUID.randomUUID().toString())
-                    .addValue("ts", chTs(Instant.ofEpochMilli(offHoursTs).minusSeconds((0..300L).random())))
+                    .addValue("ts", chTs(offHoursTs.minusSeconds((0..300L).random())))
                     .addValue("mt", "HI")
                     .addValue("uid", userId)
                     .addValue("al", "1")

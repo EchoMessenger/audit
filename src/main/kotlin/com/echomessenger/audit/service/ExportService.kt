@@ -299,8 +299,28 @@ class ExportService(
     }
 
     private fun ExportFilters.toMessageReportRequest(): MessageReportRequest {
-        val userList = users?.takeIf { it.isNotEmpty() } ?: userId?.let { listOf(it) }
-        val topicList = topics?.takeIf { it.isNotEmpty() } ?: topicId?.let { listOf(it) }
+        // Validate unsupported filters
+        if (eventType != null) {
+            throw IllegalArgumentException("Filter 'eventType' is not supported for message export")
+        }
+        if (status != null) {
+            throw IllegalArgumentException("Filter 'status' is not supported for message export")
+        }
+
+        // Sanitize users: trim, filter empty, fall back to userId if needed
+        val userList = users
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: userId?.let { listOf(it) }
+
+        // Sanitize topics: trim, filter empty, fall back to topicId if needed
+        val topicList = topics
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: topicId?.let { listOf(it) }
+
         return MessageReportRequest(
             users = userList,
             topics = topicList,
@@ -342,7 +362,7 @@ class ExportService(
 
             if (unavailableUsers.isNotEmpty()) {
                 val suffix = unavailableUsers.joinToString(",")
-                throw IllegalStateException("failed to resolve user in restauth: $suffix")
+                log.warn("failed to resolve users in restauth (will retry later or use degraded mode): {}", suffix)
             }
         }
 

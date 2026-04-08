@@ -337,7 +337,7 @@ class IncidentService(
                 """
                 SELECT
                     user_id,
-                    count() AS failure_count
+                    count(DISTINCT topic) AS failure_count
                 FROM audit.subscription_log
                 WHERE log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
                   AND user_id != ''
@@ -381,16 +381,15 @@ class IncidentService(
             jdbc.queryForObject(
                 """
                 SELECT
-                    medianExact(first_hour_count) AS system_median
+                    medianExact(hourly_count) AS system_median
                 FROM (
                     SELECT
                         sess_user_id,
-                        count() AS first_hour_count
+                        count() AS hourly_count
                     FROM audit.client_req_log
                     WHERE log_timestamp >= fromUnixTimestamp64Milli(:baselineWindowTs)
                       AND msg_type = 'LOGIN'
-                    GROUP BY sess_user_id, toStartOfDay(log_timestamp)
-                    LIMIT 1
+                    GROUP BY sess_user_id, toStartOfHour(log_timestamp)
                 )
                 """.trimIndent(),
                 mapOf(
@@ -415,13 +414,17 @@ class IncidentService(
                 SELECT
                     c.sess_user_id AS user_id,
                     count() AS request_count,
-                    max(a.log_timestamp) AS last_activity
+                    max(a.last_activity) AS last_activity
                 FROM audit.client_req_log c
-                LEFT JOIN audit.account_log a ON c.sess_user_id = a.user_id
+                LEFT JOIN (
+                    SELECT user_id, max(log_timestamp) AS last_activity
+                    FROM audit.account_log
+                    GROUP BY user_id
+                ) AS a ON c.sess_user_id = a.user_id
                 WHERE c.log_timestamp >= fromUnixTimestamp64Milli(:currentWindowTs)
                   AND c.sess_user_id != ''
                 GROUP BY c.sess_user_id
-                HAVING max(a.log_timestamp) < fromUnixTimestamp64Milli(:inactivityThresholdTs)
+                HAVING a.last_activity < fromUnixTimestamp64Milli(:inactivityThresholdTs)
                   AND request_count >= :requestThreshold
                 """.trimIndent(),
                 params,
@@ -487,7 +490,7 @@ class IncidentService(
                     OR toHour(toTimeZone(log_timestamp, :timezone)) >= :endHour
                   )
                 GROUP BY sess_user_id
-                HAVING request_count > :threshold
+                HAVING request_count >= :threshold
                 """.trimIndent(),
                 params,
             ) { rs, _ -> rs.getString("user_id") to rs.getLong("request_count") }
@@ -525,7 +528,7 @@ class IncidentService(
                 """
                 SELECT
                     user_id,
-                    arrayJoin(tags) AS changed_role
+                    arrayJoin(arrayFilter(x -> x LIKE 'role:%', tags)) AS changed_role
                 FROM audit.account_log
                 WHERE action = 'UPDATE'
                   AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)

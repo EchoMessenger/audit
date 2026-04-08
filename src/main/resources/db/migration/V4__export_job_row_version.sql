@@ -22,7 +22,7 @@ SELECT
     argMax(
         status,
         (
-            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            multiIf(status = 'running', 1, status = 'pending', 0, 2),
             toUnixTimestamp64Milli(completed_at),
             toUnixTimestamp64Milli(created_at)
         )
@@ -30,7 +30,7 @@ SELECT
     argMax(
         format,
         (
-            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            multiIf(status = 'running', 1, status = 'pending', 0, 2),
             toUnixTimestamp64Milli(completed_at),
             toUnixTimestamp64Milli(created_at)
         )
@@ -39,7 +39,7 @@ SELECT
     argMax(
         completed_at,
         (
-            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            multiIf(status = 'running', 1, status = 'pending', 0, 2),
             toUnixTimestamp64Milli(completed_at),
             toUnixTimestamp64Milli(created_at)
         )
@@ -47,7 +47,7 @@ SELECT
     argMax(
         download_url,
         (
-            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            multiIf(status = 'running', 1, status = 'pending', 0, 2),
             toUnixTimestamp64Milli(completed_at),
             toUnixTimestamp64Milli(created_at)
         )
@@ -55,7 +55,7 @@ SELECT
     argMax(
         error_message,
         (
-            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            multiIf(status = 'running', 1, status = 'pending', 0, 2),
             toUnixTimestamp64Milli(completed_at),
             toUnixTimestamp64Milli(created_at)
         )
@@ -63,7 +63,7 @@ SELECT
     argMax(
         file_size_bytes,
         (
-            multiIf(status = 'running', 2, status = 'pending', 1, 0),
+            multiIf(status = 'running', 1, status = 'pending', 0, 2),
             toUnixTimestamp64Milli(completed_at),
             toUnixTimestamp64Milli(created_at)
         )
