@@ -109,11 +109,12 @@ class IncidentService(
                 """
                 SELECT
                     sess_remote_addr AS ip,
-                    count() AS attempt_count
+                    uniqExact(sess_user_id) AS attempt_count
                 FROM audit.client_req_log
                 WHERE msg_type = 'LOGIN'
                   AND sess_auth_level = '0'
                   AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                  AND sess_user_id != ''
                 GROUP BY sess_remote_addr
                 HAVING attempt_count >= :threshold
                 """.trimIndent(),
@@ -126,12 +127,13 @@ class IncidentService(
                 """
                 SELECT
                     sess_user_id AS user_id,
-                    count() AS attempt_count
+                    uniqExact(sess_remote_addr) AS attempt_count
                 FROM audit.client_req_log
                 WHERE msg_type = 'LOGIN'
                   AND sess_auth_level = '0'
                   AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
                   AND sess_user_id != ''
+                  AND sess_remote_addr != ''
                 GROUP BY sess_user_id
                 HAVING attempt_count >= :threshold
                 """.trimIndent(),
@@ -308,7 +310,7 @@ class IncidentService(
                 FROM (
                     SELECT
                         msg_from_user_id,
-                        countIf(hour >= toStartOfHour(fromUnixTimestamp64Milli(:currentWindowTs))) AS current_count,
+                        sumIf(hourly_count, hour >= toStartOfHour(fromUnixTimestamp64Milli(:currentWindowTs))) AS current_count,
                         medianExact(hourly_count) AS median_hourly
                     FROM (
                         SELECT

@@ -6,13 +6,13 @@ WORKDIR /build
 # Кэшируем зависимости отдельным слоем — пересборка только при изменении build файлов
 COPY build.gradle.kts settings.gradle.kts ./
 COPY gradle/ gradle/
-COPY gradlew ./
+COPY gradlew gradlew.bat ./
 
-RUN chmod +x gradlew && ./gradlew dependencies --no-daemon --quiet 2>/dev/null || true
+RUN chmod +x gradlew && ./gradlew --version
 
 COPY src/ src/
 
-RUN ./gradlew bootJar --no-daemon -x test
+RUN ./gradlew bootJar --no-daemon -x test --stacktrace
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine AS runtime
