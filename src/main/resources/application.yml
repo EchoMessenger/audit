@@ -86,6 +86,7 @@ audit:
       # R1: Brute Force Detection
       brute-force-threshold: 10
       brute-force-window-minutes: 5
+      brute-force-count-mode: unique_entities # unique_entities | attempt_count
       
       # R2: Concurrent Sessions (replaces device_switch)
       concurrent-sessions-threshold: 3
@@ -98,6 +99,8 @@ audit:
       # R4: Volume Anomaly
       volume-anomaly-multiplier: 10.0
       volume-anomaly-min-threshold: 50
+      volume-anomaly-static-threshold-enabled: false
+      volume-anomaly-static-threshold: 300
       
       # R5: Topic Enumeration
       topic-enumeration-threshold: 5

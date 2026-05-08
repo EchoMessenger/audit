@@ -586,6 +586,31 @@ Note: This endpoint does not use cursor-based pagination (exception to section 2
 
 ---
 
+### 6.4 Ручной запуск детекции инцидентов
+
+**POST** `/internal/incidents/detect`
+
+Принудительно запускает все правила детекции инцидентов немедленно (без ожидания планового интервала scheduler).
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "trigger": "manual",
+  "timestamp": 1736770000000
+}
+```
+
+**HTTP Status:**
+- 200 OK
+- 401 Unauthorized
+- 403 Forbidden
+
+**Required Roles:** `audit_admin`
+
+---
+
 ## 7. Экспорт данных
 
 ### 7.1 Запуск экспорта

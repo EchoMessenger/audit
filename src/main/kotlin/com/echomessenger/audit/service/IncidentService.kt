@@ -17,6 +17,7 @@ class IncidentService(
     // R1: Brute Force
     @Value("\${audit.incidents.rules.brute-force-threshold:10}") private val bruteForceThreshold: Int,
     @Value("\${audit.incidents.rules.brute-force-window-minutes:5}") private val bruteForceWindowMinutes: Int,
+    @Value("\${audit.incidents.rules.brute-force-count-mode:unique_entities}") private val bruteForceCountMode: String,
     // R2: Concurrent Sessions
     @Value("\${audit.incidents.rules.concurrent-sessions-threshold:3}") private val concurrentSessionsThreshold: Int,
     @Value("\${audit.incidents.rules.concurrent-sessions-window-minutes:15}") private val concurrentSessionsWindowMinutes: Int,
@@ -26,6 +27,8 @@ class IncidentService(
     // R4: Volume Anomaly
     @Value("\${audit.incidents.rules.volume-anomaly-multiplier:10.0}") private val volumeAnomalyMultiplier: Double,
     @Value("\${audit.incidents.rules.volume-anomaly-min-threshold:50}") private val volumeAnomalyMinThreshold: Int,
+    @Value("\${audit.incidents.rules.volume-anomaly-static-threshold-enabled:false}") private val volumeAnomalyStaticThresholdEnabled: Boolean,
+    @Value("\${audit.incidents.rules.volume-anomaly-static-threshold:300}") private val volumeAnomalyStaticThreshold: Int,
     // R5: Topic Enumeration
     @Value("\${audit.incidents.rules.topic-enumeration-threshold:5}") private val topicEnumerationThreshold: Int,
     @Value("\${audit.incidents.rules.topic-enumeration-window-minutes:10}") private val topicEnumerationWindowMinutes: Int,
@@ -97,6 +100,9 @@ class IncidentService(
 
     private fun detectBruteForce() {
         val windowMs = bruteForceWindowMinutes * 60_000L
+        val useAttemptCount = bruteForceCountMode.equals("attempt_count", ignoreCase = true)
+        val ipCountExpr = if (useAttemptCount) "count()" else "uniqExact(sess_user_id)"
+        val userCountExpr = if (useAttemptCount) "count()" else "uniqExact(sess_remote_addr)"
         val params =
             MapSqlParameterSource().apply {
                 addValue("windowTs", System.currentTimeMillis() - windowMs)
@@ -109,10 +115,10 @@ class IncidentService(
                 """
                 SELECT
                     sess_remote_addr AS ip,
-                    uniqExact(sess_user_id) AS attempt_count
+                    $ipCountExpr AS attempt_count
                 FROM audit.client_req_log
                 WHERE msg_type = 'LOGIN'
-                  AND sess_auth_level = '0'
+                  AND sess_auth_level IN ('0', 'NONE')
                   AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
                   AND sess_user_id != ''
                 GROUP BY sess_remote_addr
@@ -127,10 +133,10 @@ class IncidentService(
                 """
                 SELECT
                     sess_user_id AS user_id,
-                    uniqExact(sess_remote_addr) AS attempt_count
+                    $userCountExpr AS attempt_count
                 FROM audit.client_req_log
                 WHERE msg_type = 'LOGIN'
-                  AND sess_auth_level = '0'
+                  AND sess_auth_level IN ('0', 'NONE')
                   AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
                   AND sess_user_id != ''
                   AND sess_remote_addr != ''
@@ -152,6 +158,7 @@ class IncidentService(
                         details =
                             mapOf(
                                 "detection_type" to "password_spraying",
+                                "count_mode" to if (useAttemptCount) "attempt_count" else "unique_entities",
                                 "ip" to ip,
                                 "ip_attempt_count" to ipCount,
                                 "window_minutes" to bruteForceWindowMinutes,
@@ -175,6 +182,7 @@ class IncidentService(
                         details =
                             mapOf(
                                 "detection_type" to "credential_stuffing",
+                                "count_mode" to if (useAttemptCount) "attempt_count" else "unique_entities",
                                 "user_id" to userId,
                                 "user_attempt_count" to userCount,
                                 "window_minutes" to bruteForceWindowMinutes,
@@ -291,6 +299,52 @@ class IncidentService(
         val currentWindowMs = 3_600_000L
         val baselineWindowMs = 30L * 24 * 3_600_000L
 
+        if (volumeAnomalyStaticThresholdEnabled) {
+            val params =
+                MapSqlParameterSource().apply {
+                    addValue("currentWindowTs", System.currentTimeMillis() - currentWindowMs)
+                    addValue("threshold", volumeAnomalyStaticThreshold)
+                }
+
+            val suspects =
+                jdbc.query(
+                    """
+                    SELECT
+                        msg_from_user_id AS user_id,
+                        count() AS current_count
+                    FROM audit.message_log
+                    WHERE log_timestamp >= fromUnixTimestamp64Milli(:currentWindowTs)
+                      AND msg_from_user_id IS NOT NULL
+                    GROUP BY msg_from_user_id
+                    HAVING current_count >= :threshold
+                    """.trimIndent(),
+                    params,
+                ) { rs, _ -> rs.getString("user_id") to rs.getLong("current_count") }
+
+            suspects.forEach { (userId, count) ->
+                if (!incidentRepository.existsByTypeAndUserAndWindow("volume_anomaly", userId, currentWindowMs)) {
+                    incidentRepository.upsert(
+                        Incident(
+                            incidentId = UUID.randomUUID().toString(),
+                            type = "volume_anomaly",
+                            status = "open",
+                            detectedAt = System.currentTimeMillis(),
+                            userId = userId,
+                            details =
+                                mapOf(
+                                    "detection_mode" to "static_threshold",
+                                    "current_hour_count" to count,
+                                    "threshold_count" to volumeAnomalyStaticThreshold,
+                                ),
+                            updatedAt = System.currentTimeMillis(),
+                        ),
+                    )
+                    log.warn("Volume anomaly userId={} count={} mode=static_threshold", userId, count)
+                }
+            }
+            return
+        }
+
         val params =
             MapSqlParameterSource().apply {
                 addValue("currentWindowTs", System.currentTimeMillis() - currentWindowMs)
@@ -348,6 +402,7 @@ class IncidentService(
                         userId = userId,
                         details =
                             mapOf(
+                                "detection_mode" to "baseline_ratio",
                                 "current_hour_count" to count,
                                 "median_ratio" to ratio,
                                 "threshold_multiplier" to volumeAnomalyMultiplier,
@@ -375,16 +430,31 @@ class IncidentService(
                 """
                 SELECT
                     user_id,
-                    count(DISTINCT topic) AS failure_count
-                FROM audit.subscription_log
-                WHERE log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
-                  AND user_id != ''
-                  AND action = 'CREATE'
+                    count(DISTINCT topic) AS failed_attempt_count
+                FROM (
+                    SELECT
+                        c.sess_user_id AS user_id,
+                        ifNull(c.sub_topic, c.msg_topic) AS topic
+                    FROM audit.client_req_log AS c
+                    LEFT JOIN (
+                        SELECT DISTINCT user_id, topic, toNullable(topic) AS matched_topic
+                        FROM audit.subscription_log
+                        WHERE log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                          AND action = 'CREATE'
+                    ) AS s
+                      ON s.user_id = c.sess_user_id
+                     AND s.topic = ifNull(c.sub_topic, c.msg_topic)
+                    WHERE c.log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                      AND c.msg_type = 'SUB'
+                      AND c.sess_user_id != ''
+                      AND ifNull(c.sub_topic, c.msg_topic) != ''
+                      AND s.matched_topic IS NULL
+                )
                 GROUP BY user_id
-                HAVING failure_count >= :threshold
+                HAVING failed_attempt_count >= :threshold
                 """.trimIndent(),
                 params,
-            ) { rs, _ -> rs.getString("user_id") to rs.getLong("failure_count") }
+            ) { rs, _ -> rs.getString("user_id") to rs.getLong("failed_attempt_count") }
 
         suspects.forEach { (userId, count) ->
             if (!incidentRepository.existsByTypeAndUserAndWindow("topic_enumeration", userId, windowMs)) {
@@ -397,13 +467,15 @@ class IncidentService(
                         userId = userId,
                         details =
                             mapOf(
-                                "subscription_attempts" to count,
+                                "failed_subscription_attempts" to count,
+                                "distinct_topics" to count,
                                 "window_minutes" to topicEnumerationWindowMinutes,
+                                "source" to "client_req_log.SUB_without_subscription_log.CREATE",
                             ),
                         updatedAt = System.currentTimeMillis(),
                     ),
                 )
-                log.warn("Topic enumeration detected userId={} attempts={}", userId, count)
+                log.warn("Topic enumeration detected userId={} failed_attempts={}", userId, count)
             }
         }
     }
