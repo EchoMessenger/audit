@@ -534,7 +534,7 @@ class IncidentService(
                 WHERE c.log_timestamp >= fromUnixTimestamp64Milli(:currentWindowTs)
                   AND c.sess_user_id != ''
                 GROUP BY c.sess_user_id
-                HAVING a.last_activity < fromUnixTimestamp64Milli(:inactivityThresholdTs)
+                HAVING last_activity < fromUnixTimestamp64Milli(:inactivityThresholdTs)
                   AND request_count >= :requestThreshold
                 """.trimIndent(),
                 params,
