@@ -62,13 +62,6 @@ class UserNameResolver(
             .expireAfterWrite(negativeCacheTtlSeconds, TimeUnit.SECONDS)
             .build<String, Boolean>()
 
-    private val unavailableCache =
-        Caffeine
-            .newBuilder()
-            .maximumSize(cacheSize)
-            .expireAfterWrite(negativeCacheTtlSeconds, TimeUnit.SECONDS)
-            .build<String, Boolean>()
-
     fun resolveDisplayName(tinodeUid: String?): String? = lookupUser(tinodeUid).displayName
 
     fun lookupUser(tinodeUid: String?): UserLookupResult {
@@ -87,10 +80,6 @@ class UserNameResolver(
         if (negativeCache.getIfPresent(uid) == true) {
             return UserLookupResult(UserLookupStatus.NOT_FOUND)
         }
-        if (unavailableCache.getIfPresent(uid) == true) {
-            return UserLookupResult(UserLookupStatus.UNAVAILABLE)
-        }
-
         val client = restClient
         if (client == null) {
             log.warn("RESTAUTH_BASE_URL is not configured, cannot resolve user uid={}", uid)
@@ -124,12 +113,10 @@ class UserNameResolver(
             }
 
             log.warn("User resolve failed (uid={} status={})", uid, e.statusCode.value())
-            unavailableCache.put(uid, true)
             UserLookupResult(UserLookupStatus.UNAVAILABLE)
         } catch (e: Exception) {
             // graceful fallback: do not fail report/export when restauth is temporarily unavailable
             log.warn("User resolve failed (uid={})", uid, e)
-            unavailableCache.put(uid, true)
             UserLookupResult(UserLookupStatus.UNAVAILABLE)
         }
     }
@@ -177,4 +164,3 @@ class UserNameResolver(
         fun withUserName(userName: String): MessageWithUserName
     }
 }
-

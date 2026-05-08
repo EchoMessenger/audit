@@ -31,6 +31,7 @@ class IncidentServiceTest {
             volumeAnomalyStaticThreshold = 300,
             topicEnumerationThreshold = 5,
             topicEnumerationWindowMinutes = 10,
+            topicEnumerationGraceSeconds = 5,
             inactiveActivationInactivityDays = 30,
             inactiveActivationMultiplier = 5.0,
             offHoursStart = "09:00",

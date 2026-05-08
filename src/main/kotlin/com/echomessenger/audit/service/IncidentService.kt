@@ -32,6 +32,7 @@ class IncidentService(
     // R5: Topic Enumeration
     @Value("\${audit.incidents.rules.topic-enumeration-threshold:5}") private val topicEnumerationThreshold: Int,
     @Value("\${audit.incidents.rules.topic-enumeration-window-minutes:10}") private val topicEnumerationWindowMinutes: Int,
+    @Value("\${audit.incidents.rules.topic-enumeration-grace-seconds:5}") private val topicEnumerationGraceSeconds: Int,
     // R6: Inactive Account Activation
     @Value("\${audit.incidents.rules.inactive-activation-inactivity-days:30}") private val inactiveActivationInactivityDays: Int,
     @Value("\${audit.incidents.rules.inactive-activation-multiplier:5.0}") private val inactiveActivationMultiplier: Double,
@@ -422,6 +423,7 @@ class IncidentService(
         val params =
             MapSqlParameterSource().apply {
                 addValue("windowTs", System.currentTimeMillis() - windowMs)
+                addValue("graceTs", System.currentTimeMillis() - topicEnumerationGraceSeconds * 1000L)
                 addValue("threshold", topicEnumerationThreshold)
             }
 
@@ -445,6 +447,7 @@ class IncidentService(
                       ON s.user_id = c.sess_user_id
                      AND s.topic = ifNull(c.sub_topic, c.msg_topic)
                     WHERE c.log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                      AND c.log_timestamp <= fromUnixTimestamp64Milli(:graceTs)
                       AND c.msg_type = 'SUB'
                       AND c.sess_user_id != ''
                       AND ifNull(c.sub_topic, c.msg_topic) != ''
@@ -470,6 +473,7 @@ class IncidentService(
                                 "failed_subscription_attempts" to count,
                                 "distinct_topics" to count,
                                 "window_minutes" to topicEnumerationWindowMinutes,
+                                "grace_seconds" to topicEnumerationGraceSeconds,
                                 "source" to "client_req_log.SUB_without_subscription_log.CREATE",
                             ),
                         updatedAt = System.currentTimeMillis(),

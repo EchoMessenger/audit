@@ -105,6 +105,7 @@ audit:
       # R5: Topic Enumeration
       topic-enumeration-threshold: 5
       topic-enumeration-window-minutes: 10
+      topic-enumeration-grace-seconds: ${AUDIT_INCIDENTS_TOPIC_ENUMERATION_GRACE_SECONDS:5}
       
       # R6: Inactive Account Activation
       inactive-activation-inactivity-days: 30
