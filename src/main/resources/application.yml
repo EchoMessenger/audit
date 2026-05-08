@@ -81,7 +81,7 @@ audit:
     reports-per-minute: 5
     export-per-minute: 2
   incidents:
-    detection-interval-seconds: 300
+    detection-interval-seconds: ${AUDIT_INCIDENTS_DETECTION_INTERVAL_SECONDS:15}
     rules:
       # R1: Brute Force Detection
       brute-force-threshold: 10

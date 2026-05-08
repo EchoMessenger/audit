@@ -43,7 +43,7 @@ class IncidentService(
 ) {
     private val log = LoggerFactory.getLogger(IncidentService::class.java)
 
-    @Scheduled(fixedDelayString = "\${audit.incidents.detection-interval-seconds:300}000")
+    @Scheduled(fixedDelayString = "\${audit.incidents.detection-interval-seconds:15}000")
     fun runDetection() {
         log.debug("Running incident detection rules")
         
