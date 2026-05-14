@@ -132,24 +132,25 @@ class IncidentDetectionIT : IntegrationTestBase() {
     // ── Mass Delete ───────────────────────────────────────────────────────────
 
     @Test
-    fun `detectMassDelete creates incident for user with 10+ hard-deletes in 60 seconds`() {
+    fun `detectMassDelete creates incident for user with 10+ message delete requests in 60 seconds`() {
         val userId = "mass_del_${UUID.randomUUID().toString().take(8)}"
         val now = Instant.now()
 
         repeat(12) { i ->
             jdbc.update(
-                """INSERT INTO audit.message_log
-                   (log_id, log_timestamp, action, msg_topic, msg_from_user_id,
-                    msg_timestamp, msg_seq_id)
-                   VALUES (:id, :ts, :act, :topic, :uid, :msgTs, :seqId)""",
+                """INSERT INTO audit.client_req_log
+                   (log_id, log_timestamp, msg_type, sess_user_id, msg_id,
+                    msg_topic, del_what, del_hard)
+                   VALUES (:id, :ts, :mt, :uid, :msgId, :topic, :delWhat, :hard)""",
                 MapSqlParameterSource()
                     .addValue("id", UUID.randomUUID().toString())
                     .addValue("ts", chTs(now.minusSeconds((0..30L).random())))
-                    .addValue("act", "DELETE")
-                    .addValue("topic", "topic1")
+                    .addValue("mt", "DEL")
                     .addValue("uid", userId)
-                    .addValue("msgTs", now.minusSeconds((0..30L).random()).toEpochMilli())
-                    .addValue("seqId", i + 1),
+                    .addValue("msgId", "del-$i")
+                    .addValue("topic", "topic1")
+                    .addValue("delWhat", "MSG")
+                    .addValue("hard", true),
             )
         }
         Thread.sleep(800)

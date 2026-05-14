@@ -260,13 +260,32 @@ class IncidentService(
             jdbc.query(
                 """
                 SELECT
-                    msg_from_user_id AS user_id,
-                    count() AS delete_count
-                FROM audit.message_log
-                WHERE toString(action) = 'DELETE'
-                  AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
-                  AND msg_from_user_id IS NOT NULL
-                GROUP BY msg_from_user_id
+                    user_id,
+                    max(source_delete_count) AS delete_count
+                FROM (
+                    SELECT
+                        msg_from_user_id AS user_id,
+                        count() AS source_delete_count
+                    FROM audit.message_log
+                    WHERE toString(action) = 'DELETE'
+                      AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                      AND msg_from_user_id IS NOT NULL
+                      AND msg_from_user_id != ''
+                    GROUP BY msg_from_user_id
+
+                    UNION ALL
+
+                    SELECT
+                        sess_user_id AS user_id,
+                        count() AS source_delete_count
+                    FROM audit.client_req_log
+                    WHERE msg_type = 'DEL'
+                      AND (del_what IS NULL OR del_what = '' OR del_what = 'MSG')
+                      AND log_timestamp >= fromUnixTimestamp64Milli(:windowTs)
+                      AND sess_user_id != ''
+                    GROUP BY sess_user_id
+                )
+                GROUP BY user_id
                 HAVING delete_count >= :threshold
                 """.trimIndent(),
                 params,
