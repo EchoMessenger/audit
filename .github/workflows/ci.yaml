@@ -2,7 +2,7 @@ name: Test, Build and Push to GHCR
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master, ADT-* ]
 
 env:
   REGISTRY: ghcr.io
