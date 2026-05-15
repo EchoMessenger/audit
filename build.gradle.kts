@@ -113,7 +113,8 @@ kover {
 
 sonar {
     properties {
-        property("sonar.projectKey", System.getenv("SONAR_PROJECT_KEY_AUDIT") ?: "audit")
+        val projectKey = System.getenv("SONAR_PROJECT_KEY_AUDIT")?.trim().takeUnless { it.isNullOrEmpty() } ?: "audit"
+        property("sonar.projectKey", projectKey)
         property("sonar.projectName", "audit")
         property("sonar.coverage.jacoco.xmlReportPaths", "build/reports/kover/report.xml")
         property("sonar.exclusions", "src/test/**")

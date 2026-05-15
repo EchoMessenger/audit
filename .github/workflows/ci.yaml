@@ -31,7 +31,7 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-          SONAR_PROJECT_KEY_AUDIT: ${{ vars.SONAR_PROJECT_KEY_AUDIT }}
+          SONAR_PROJECT_KEY_AUDIT: audit
         run: ./gradlew --no-daemon test koverXmlReport sonar
 
   build-and-push:
