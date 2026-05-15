@@ -2,7 +2,7 @@ name: Test, Build and Push to GHCR
 
 on:
   push:
-    branches: [ main, master, ADT-* ]
+    branches: [ main ]
 
 env:
   REGISTRY: ghcr.io
@@ -27,23 +27,16 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Run tests and generate Kover XML
-        run: ./gradlew --no-daemon test koverXmlReport
-
-      - name: SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@v5
+      - name: Run tests, generate Kover XML and SonarQube scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        with:
-          projectBaseDir: .
-          args: >
-            -Dsonar.projectKey=audit
-            -Dsonar.projectName=audit
-            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/kover/report.xml
+          SONAR_PROJECT_KEY_AUDIT: ${{ vars.SONAR_PROJECT_KEY_AUDIT }}
+        run: ./gradlew --no-daemon test koverXmlReport sonarqube
 
   build-and-push:
     runs-on: ubuntu-latest
+    needs: sonar
 
     permissions:
       contents: read

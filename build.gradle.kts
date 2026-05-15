@@ -2,6 +2,7 @@ plugins {
     id("org.springframework.boot") version "3.4.2"
     id("io.spring.dependency-management") version "1.1.7"
     id("org.jetbrains.kotlinx.kover") version "0.9.1"
+    id("org.sonarqube") version "5.1.0.4882"
     kotlin("jvm") version "2.1.0"
     kotlin("plugin.spring") version "2.1.0"
 }
@@ -101,10 +102,22 @@ kover {
             excludes {
                 classes(
                     "com.echomessenger.audit.AuditServiceApplication",
-                    "com.echomessenger.audit.config.*"
+                    "com.echomessenger.audit.config.*",
+                    "com.echomessenger.audit.unit.*",
+                    "com.echomessenger.audit.integration.*"
                 )
             }
         }
+    }
+}
+
+sonar {
+    properties {
+        property("sonar.projectKey", System.getenv("SONAR_PROJECT_KEY_AUDIT") ?: "audit")
+        property("sonar.projectName", "audit")
+        property("sonar.coverage.jacoco.xmlReportPaths", "build/reports/kover/report.xml")
+        property("sonar.exclusions", "src/test/**")
+        property("sonar.test.exclusions", "src/test/**")
     }
 }
 
