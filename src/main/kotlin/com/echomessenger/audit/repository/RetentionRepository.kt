@@ -58,7 +58,7 @@ class RetentionRepository(
     }
 
     private fun extractTtlFromDdl(ddl: String): String? =
-        Regex("""TTL\s+(.+?)(?:\s+SETTINGS|\s+ORDER BY|\s*$)""", RegexOption.IGNORE_CASE)
+        Regex("""TTL\s+(.+?)(?:(?:\s+SETTINGS)|(?:\s+ORDER BY)|(?:\s*$))""", RegexOption.IGNORE_CASE)
             .find(ddl)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotBlank() }
 
     private fun parseTtlDays(expr: String?): Int? =

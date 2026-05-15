@@ -123,10 +123,10 @@ class ExportService(
                     errorMessage = e.message?.take(500),
                 ),
             )
-            outputFile.delete()
+            deleteExportTempFile(outputFile, job.exportId, "failed_export")
         } finally {
             if (isS3Storage() && outputFile.exists()) {
-                outputFile.delete()
+                deleteExportTempFile(outputFile, job.exportId, "s3_cleanup")
             }
         }
     }
@@ -420,10 +420,7 @@ class ExportService(
         }
 
     private fun resolveDownloadUrl(exportId: String): String =
-        when (storageType.lowercase()) {
-            "pvc" -> "/api/v1/audit/export/$exportId/download"
-            else -> "/api/v1/audit/export/$exportId/download"
-        }
+        "/api/v1/audit/export/$exportId/download"
 
     private fun uploadToS3(
         outputFile: File,
@@ -455,5 +452,20 @@ class ExportService(
         val prefix = s3KeyPrefix.trim().trim('/')
         val fileName = "$exportId.${format.name}"
         return if (prefix.isBlank()) fileName else "$prefix/$fileName"
+    }
+
+    private fun deleteExportTempFile(
+        outputFile: File,
+        exportId: String,
+        reason: String,
+    ) {
+        if (outputFile.exists() && !outputFile.delete()) {
+            log.warn(
+                "Failed to delete export temp file exportId={} path={} reason={}",
+                exportId,
+                outputFile.absolutePath,
+                reason,
+            )
+        }
     }
 }
