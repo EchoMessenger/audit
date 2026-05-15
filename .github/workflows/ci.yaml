@@ -1,4 +1,4 @@
-name: Build and Push to GHCR
+name: Test, Build and Push to GHCR
 
 on:
   push:
@@ -9,6 +9,39 @@ env:
   IMAGE_NAME: echomessenger/audit
 
 jobs:
+  sonar:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Run tests and generate Kover XML
+        run: ./gradlew --no-daemon test koverXmlReport
+
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: .
+          args: >
+            -Dsonar.projectKey=audit
+            -Dsonar.projectName=audit
+            -Dsonar.coverage.jacoco.xmlReportPaths=build/reports/kover/report.xml
+
   build-and-push:
     runs-on: ubuntu-latest
 

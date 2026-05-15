@@ -21,6 +21,13 @@
 **Аутентификация:** Bearer Token (JWT)  
 **Даты и время:** UNIX timestamp (миллисекунды)
 
+## GitHub Actions SonarQube
+
+Для workflow `/.github/workflows/sonar.yml` нужны:
+- `secrets.SONAR_HOST_URL`
+- `secrets.SONAR_TOKEN`
+- `vars.SONAR_PROJECT_KEY_AUDIT`
+
 ---
 
 ## 2. Базовые сущности

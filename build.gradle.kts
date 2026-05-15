@@ -1,6 +1,7 @@
 plugins {
     id("org.springframework.boot") version "3.4.2"
     id("io.spring.dependency-management") version "1.1.7"
+    id("org.jetbrains.kotlinx.kover") version "0.9.1"
     kotlin("jvm") version "2.1.0"
     kotlin("plugin.spring") version "2.1.0"
 }
@@ -92,6 +93,19 @@ kotlin {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+kover {
+    reports {
+        filters {
+            excludes {
+                classes(
+                    "com.echomessenger.audit.AuditServiceApplication",
+                    "com.echomessenger.audit.config.*"
+                )
+            }
+        }
+    }
 }
 
 tasks.bootJar {
