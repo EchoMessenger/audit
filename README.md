@@ -21,6 +21,13 @@
 **Аутентификация:** Bearer Token (JWT)  
 **Даты и время:** UNIX timestamp (миллисекунды)
 
+## GitHub Actions SonarQube
+
+Для workflow `/.github/workflows/sonar.yml` нужны:
+- `secrets.SONAR_HOST_URL`
+- `secrets.SONAR_TOKEN`
+- `vars.SONAR_PROJECT_KEY_AUDIT`
+
 ---
 
 ## 2. Базовые сущности
@@ -583,6 +590,31 @@ Note: This endpoint does not use cursor-based pagination (exception to section 2
 - 404 Not Found (инцидент не найден)
 
 **Required Roles:** `audit_admin` (только администраторы могут обновлять статус)
+
+---
+
+### 6.4 Ручной запуск детекции инцидентов
+
+**POST** `/internal/incidents/detect`
+
+Принудительно запускает все правила детекции инцидентов немедленно (без ожидания планового интервала scheduler).
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "trigger": "manual",
+  "timestamp": 1736770000000
+}
+```
+
+**HTTP Status:**
+- 200 OK
+- 401 Unauthorized
+- 403 Forbidden
+
+**Required Roles:** `audit_admin`
 
 ---
 

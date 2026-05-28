@@ -1,6 +1,8 @@
 plugins {
     id("org.springframework.boot") version "3.4.2"
     id("io.spring.dependency-management") version "1.1.7"
+    id("org.jetbrains.kotlinx.kover") version "0.9.1"
+    id("org.sonarqube") version "7.3.0.8198"
     kotlin("jvm") version "2.1.0"
     kotlin("plugin.spring") version "2.1.0"
 }
@@ -92,6 +94,32 @@ kotlin {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+kover {
+    reports {
+        filters {
+            excludes {
+                classes(
+                    "com.echomessenger.audit.AuditServiceApplication",
+                    "com.echomessenger.audit.config.*",
+                    "com.echomessenger.audit.unit.*",
+                    "com.echomessenger.audit.integration.*"
+                )
+            }
+        }
+    }
+}
+
+sonar {
+    properties {
+        val projectKey = System.getenv("SONAR_PROJECT_KEY_AUDIT")?.trim().takeUnless { it.isNullOrEmpty() } ?: "audit"
+        property("sonar.projectKey", projectKey)
+        property("sonar.projectName", "audit")
+        property("sonar.coverage.jacoco.xmlReportPaths", "build/reports/kover/report.xml")
+        property("sonar.exclusions", "src/test/**")
+        property("sonar.test.exclusions", "src/test/**")
+    }
 }
 
 tasks.bootJar {

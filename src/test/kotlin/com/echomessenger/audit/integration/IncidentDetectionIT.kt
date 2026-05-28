@@ -132,24 +132,25 @@ class IncidentDetectionIT : IntegrationTestBase() {
     // ── Mass Delete ───────────────────────────────────────────────────────────
 
     @Test
-    fun `detectMassDelete creates incident for user with 10+ hard-deletes in 60 seconds`() {
+    fun `detectMassDelete creates incident for user with 10+ message delete requests in 60 seconds`() {
         val userId = "mass_del_${UUID.randomUUID().toString().take(8)}"
         val now = Instant.now()
 
         repeat(12) { i ->
             jdbc.update(
-                """INSERT INTO audit.message_log
-                   (log_id, log_timestamp, action, msg_topic, msg_from_user_id,
-                    msg_timestamp, msg_seq_id)
-                   VALUES (:id, :ts, :act, :topic, :uid, :msgTs, :seqId)""",
+                """INSERT INTO audit.client_req_log
+                   (log_id, log_timestamp, msg_type, sess_user_id, msg_id,
+                    msg_topic, del_what, del_hard)
+                   VALUES (:id, :ts, :mt, :uid, :msgId, :topic, :delWhat, :hard)""",
                 MapSqlParameterSource()
                     .addValue("id", UUID.randomUUID().toString())
                     .addValue("ts", chTs(now.minusSeconds((0..30L).random())))
-                    .addValue("act", "DELETE")
-                    .addValue("topic", "topic1")
+                    .addValue("mt", "DEL")
                     .addValue("uid", userId)
-                    .addValue("msgTs", now.minusSeconds((0..30L).random()).toEpochMilli())
-                    .addValue("seqId", i + 1),
+                    .addValue("msgId", "del-$i")
+                    .addValue("topic", "topic1")
+                    .addValue("delWhat", "MSG")
+                    .addValue("hard", true),
             )
         }
         Thread.sleep(800)
@@ -203,21 +204,24 @@ class IncidentDetectionIT : IntegrationTestBase() {
     // ── Topic Enumeration ─────────────────────────────────────────────────────
 
     @Test
-    fun `detectTopicEnumeration creates incident for user with 5+ subscription attempts in 10 minutes`() {
+    fun `detectTopicEnumeration creates incident for user with 5+ failed subscription probes in 10 minutes`() {
         val userId = "enum_${UUID.randomUUID().toString().take(8)}"
         val now = Instant.now()
 
         repeat(6) { i ->
             jdbc.update(
-                """INSERT INTO audit.subscription_log
-                   (log_id, log_timestamp, action, topic, user_id)
-                   VALUES (:id, :ts, :act, :topic, :uid)""",
+                """INSERT INTO audit.client_req_log
+                   (log_id, log_timestamp, msg_type, sess_user_id, sess_auth_level,
+                    sess_remote_addr, msg_topic, sub_topic)
+                   VALUES (:id, :ts, :mt, :uid, :al, :ip, :topic, :topic)""",
                 MapSqlParameterSource()
                     .addValue("id", UUID.randomUUID().toString())
                     .addValue("ts", chTs(now.minusSeconds((0..300L).random())))
-                    .addValue("act", "CREATE")
-                    .addValue("topic", "topic_${i}")
-                    .addValue("uid", userId),
+                    .addValue("mt", "SUB")
+                    .addValue("uid", userId)
+                    .addValue("al", "1")
+                    .addValue("ip", "10.10.0.1")
+                    .addValue("topic", "restricted_topic_${i}"),
             )
         }
         Thread.sleep(800)
@@ -227,9 +231,51 @@ class IncidentDetectionIT : IntegrationTestBase() {
 
         val incidents = incidentRepository.findAll(type = "topic_enumeration", userId = userId)
         assertTrue(incidents.isNotEmpty(), "Should create topic_enumeration incident for $userId")
-        val count = incidents.first().details["subscription_attempts"]
+        val count = incidents.first().details["failed_subscription_attempts"]
         assertNotNull(count)
         assertTrue((count as Number).toLong() >= 5)
+    }
+
+    @Test
+    fun `detectTopicEnumeration ignores successful subscriptions matched in subscription log`() {
+        val userId = "enum_ok_${UUID.randomUUID().toString().take(8)}"
+        val now = Instant.now()
+
+        repeat(6) { i ->
+            val topic = "allowed_topic_${i}"
+            jdbc.update(
+                """INSERT INTO audit.client_req_log
+                   (log_id, log_timestamp, msg_type, sess_user_id, sess_auth_level,
+                    sess_remote_addr, msg_topic, sub_topic)
+                   VALUES (:id, :ts, :mt, :uid, :al, :ip, :topic, :topic)""",
+                MapSqlParameterSource()
+                    .addValue("id", UUID.randomUUID().toString())
+                    .addValue("ts", chTs(now.minusSeconds((0..300L).random())))
+                    .addValue("mt", "SUB")
+                    .addValue("uid", userId)
+                    .addValue("al", "1")
+                    .addValue("ip", "10.10.0.2")
+                    .addValue("topic", topic),
+            )
+            jdbc.update(
+                """INSERT INTO audit.subscription_log
+                   (log_id, log_timestamp, action, topic, user_id)
+                   VALUES (:id, :ts, :act, :topic, :uid)""",
+                MapSqlParameterSource()
+                    .addValue("id", UUID.randomUUID().toString())
+                    .addValue("ts", chTs(now.minusSeconds((0..300L).random())))
+                    .addValue("act", "CREATE")
+                    .addValue("topic", topic)
+                    .addValue("uid", userId),
+            )
+        }
+        Thread.sleep(800)
+
+        incidentService.runDetection()
+        Thread.sleep(500)
+
+        val incidents = incidentRepository.findAll(type = "topic_enumeration", userId = userId)
+        assertTrue(incidents.isEmpty(), "Successful subscriptions should not be counted as enumeration failures")
     }
 
     // ── Off-Hours Activity ─────────────────────────────────────────────────────
