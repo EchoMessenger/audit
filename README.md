@@ -21,6 +21,39 @@
 **Аутентификация:** Bearer Token (JWT)  
 **Даты и время:** UNIX timestamp (миллисекунды)
 
+## 0. Работа с развернутой версией
+
+В продакшене и на staging сервис обычно вызывается не напрямую, а через `bff`.
+Это внешний вход для фронтенда и ручных запросов операторов: `bff` проверяет JWT,
+передает `Authorization` дальше, а затем проксирует запрос в audit service.
+
+### Публичные маршруты через BFF
+
+| Внешний путь | Внутренний путь audit |
+|---|---|
+| `GET /bff/v1/audit/events` | `GET /api/v1/audit/events` |
+| `GET /bff/v1/audit/events/{eventId}` | `GET /api/v1/audit/events/{eventId}` |
+| `GET /bff/v1/audit/auth-events` | `GET /api/v1/audit/auth-events` |
+| `GET /bff/v1/audit/sessions` | `GET /api/v1/audit/sessions` |
+| `GET /bff/v1/audit/users/{userId}/timeline` | `GET /api/v1/audit/users/{userId}/timeline` |
+| `POST /bff/v1/audit/reports/messages` | `POST /api/v1/audit/reports/messages` |
+| `POST /bff/v1/audit/export` | `POST /api/v1/audit/export` |
+| `GET /bff/v1/audit/export/{exportId}` | `GET /api/v1/audit/export/{exportId}` |
+| `GET /bff/v1/audit/export/{exportId}/download` | `GET /api/v1/audit/export/{exportId}/download` |
+| `GET /bff/v1/analytics/summary` | `GET /api/v1/analytics/summary` |
+| `GET /bff/v1/analytics/timeseries` | `GET /api/v1/analytics/timeseries` |
+| `GET /bff/v1/incidents` | `GET /api/v1/incidents` |
+| `GET /bff/v1/incidents/{incidentId}` | `GET /api/v1/incidents/{incidentId}` |
+| `POST /bff/v1/incidents/{incidentId}/status` | `POST /api/v1/incidents/{incidentId}/status` |
+| `GET /bff/v1/retention` | `GET /api/v1/retention` |
+
+### Важные оговорки
+
+* Для внешних клиентов используйте именно `bff`-маршруты, а не прямой адрес audit service.
+* `bff` отвечает за CORS, rate limit и первичную проверку JWT, audit service все равно проверяет роли `audit_read` и `audit_admin`.
+* Если в ответе встречается URL вида `/api/v1/...` или `/internal/...`, это путь внутри audit service. При внешнем вызове через `bff` используйте тот же маршрут с префиксом `/bff/v1/...`, если он есть в таблице выше.
+* Внутренний endpoint `POST /internal/incidents/detect` не проксируется через `bff` и предназначен для внутреннего вызова в кластере.
+
 ## GitHub Actions SonarQube
 
 Для workflow `/.github/workflows/sonar.yml` нужны:
